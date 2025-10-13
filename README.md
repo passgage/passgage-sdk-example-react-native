@@ -89,7 +89,7 @@ passgage-sdk-example-react-native/
 Wrap your app with `PassgageAccessProvider`:
 
 ```typescript
-import {PassgageAccessProvider} from '@passgage-sdk/react-native';
+import {PassgageAccessProvider} from '@passgage/sdk-react-native';
 
 function App() {
   return (
@@ -107,7 +107,7 @@ function App() {
 ### 2. Authentication
 
 ```typescript
-import {usePassgageAuth} from '@passgage-sdk/react-native';
+import {usePassgageAuth} from '@passgage/sdk-react-native';
 
 function LoginScreen() {
   const {login, logout, user, isLoading} = usePassgageAuth();
@@ -128,7 +128,7 @@ function LoginScreen() {
 ### 3. QR Code Scanning
 
 ```typescript
-import {usePassgageQRScanner} from '@passgage-sdk/react-native';
+import {usePassgageQRScanner} from '@passgage/sdk-react-native';
 
 function QRScannerScreen() {
   const {validateQR, isLoading} = usePassgageQRScanner();
@@ -152,7 +152,7 @@ function QRScannerScreen() {
 ### 4. NFC Validation
 
 ```typescript
-import {usePassgageNFCScanner} from '@passgage-sdk/react-native';
+import {usePassgageNFCScanner} from '@passgage/sdk-react-native';
 
 function NFCScannerScreen() {
   const {validateNFC, isLoading} = usePassgageNFCScanner();
@@ -172,7 +172,7 @@ function NFCScannerScreen() {
 ### 5. Location-Based Check-In
 
 ```typescript
-import {usePassgageCheckIn} from '@passgage-sdk/react-native';
+import {usePassgageCheckIn} from '@passgage/sdk-react-native';
 
 function CheckInScreen() {
   const {getNearbyBranches, checkInEntry, checkInExit} = usePassgageCheckIn();
@@ -199,7 +199,7 @@ function CheckInScreen() {
 ### 6. Remote Work Logging
 
 ```typescript
-import {usePassgageRemoteWork} from '@passgage-sdk/react-native';
+import {usePassgageRemoteWork} from '@passgage/sdk-react-native';
 
 function RemoteWorkScreen() {
   const {logEntry, logExit, isLoading} = usePassgageRemoteWork();

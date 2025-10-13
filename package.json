@@ -12,7 +12,7 @@
     "pods": "cd ios && pod install && cd .."
   },
   "dependencies": {
-    "@passgage/sdk-react-native": "^1.0.1",
+    "@passgage/sdk-react-native": "^1.0.2",
     "@react-navigation/native": "^6.1.9",
     "@react-navigation/native-stack": "^6.9.17",
     "react": "18.2.0",
