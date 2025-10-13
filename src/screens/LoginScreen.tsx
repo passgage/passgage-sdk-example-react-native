@@ -11,7 +11,7 @@ import {
   Platform,
   ScrollView,
 } from 'react-native';
-import {usePassgageAuth} from 'passgage-access-sdk-react-native';
+import {usePassgageAuth} from '@passgage/sdk-react-native';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');

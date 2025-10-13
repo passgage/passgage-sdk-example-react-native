@@ -1,6 +1,6 @@
 import React, {useState} from 'react';
 import {View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ActivityIndicator} from 'react-native';
-import {usePassgageNFCScanner} from 'passgage-access-sdk-react-native';
+import {usePassgageNFCScanner} from '@passgage/sdk-react-native';
 
 export default function NFCScannerScreen() {
   const [nfcCode, setNfcCode] = useState('');
