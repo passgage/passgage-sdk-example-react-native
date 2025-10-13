@@ -1,6 +1,6 @@
 import React, {useState} from 'react';
 import {View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ActivityIndicator} from 'react-native';
-import {usePassgageQRScanner} from '@passgage-sdk/react-native';
+import {usePassgageQRScanner} from 'passgage-access-sdk-react-native';
 
 export default function QRScannerScreen() {
   const [qrCode, setQrCode] = useState('');

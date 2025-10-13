@@ -1,6 +1,6 @@
 import React, {useState} from 'react';
 import {View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, ScrollView} from 'react-native';
-import {usePassgageRemoteWork, usePassgageAuth} from '@passgage-sdk/react-native';
+import {usePassgageRemoteWork, usePassgageAuth} from 'passgage-access-sdk-react-native';
 
 export default function RemoteWorkScreen() {
   const {user} = usePassgageAuth();

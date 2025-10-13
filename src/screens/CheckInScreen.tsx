@@ -1,6 +1,6 @@
 import React, {useState, useEffect} from 'react';
 import {View, Text, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, FlatList} from 'react-native';
-import {usePassgageCheckIn, usePassgageAuth} from '@passgage-sdk/react-native';
+import {usePassgageCheckIn, usePassgageAuth} from 'passgage-access-sdk-react-native';
 
 export default function CheckInScreen() {
   const {user} = usePassgageAuth();

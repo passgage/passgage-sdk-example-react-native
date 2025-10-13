@@ -8,7 +8,7 @@
 import React from 'react';
 import {NavigationContainer} from '@react-navigation/native';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
-import {PassgageAccessProvider, usePassgageAuth} from '@passgage-sdk/react-native';
+import {PassgageAccessProvider, usePassgageAuth} from 'passgage-access-sdk-react-native';
 import {Alert, ActivityIndicator, View, StyleSheet} from 'react-native';
 
 // Screens
@@ -112,12 +112,17 @@ function AppNavigator() {
  * Root App component with SDK provider
  */
 function App(): JSX.Element {
+  // ✅ TEST: SDK başarıyla import edildi!
+  console.log('🚀 Passgage SDK Example App Started!');
+  console.log('📦 SDK Provider initialized with baseURL:', API_BASE_URL);
+
   return (
     <PassgageAccessProvider
       baseURL={API_BASE_URL}
       onUnauthorized={() => {
         // Handle unauthorized access
         // This will be called if token refresh fails
+        console.log('⚠️ Session Expired - Token refresh failed');
         Alert.alert(
           'Session Expired',
           'Your session has expired. Please login again.',
@@ -125,7 +130,7 @@ function App(): JSX.Element {
       }}
       onError={error => {
         // Handle global SDK errors
-        console.error('Passgage SDK Error:', error);
+        console.error('❌ Passgage SDK Error:', error);
       }}>
       <AppNavigator />
     </PassgageAccessProvider>

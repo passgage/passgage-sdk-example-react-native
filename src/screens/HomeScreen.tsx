@@ -1,7 +1,7 @@
 import React from 'react';
 import {View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert} from 'react-native';
 import {useNavigation} from '@react-navigation/native';
-import {usePassgageAuth} from '@passgage-sdk/react-native';
+import {usePassgageAuth} from 'passgage-access-sdk-react-native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import type {RootStackParamList} from '../../App';
 

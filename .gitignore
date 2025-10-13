@@ -67,3 +67,14 @@ coverage/
 .env
 .env.local
 .env.*.local
+
+# iOS build artifacts
+ios/build/
+ios/Pods/
+ios/*.xcworkspace/xcuserdata/
+
+# Android build artifacts
+android/.gradle/
+android/build/
+android/app/build/
+
