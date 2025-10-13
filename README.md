@@ -222,6 +222,8 @@ function RemoteWorkScreen() {
 
 ## Available Hooks
 
+All hooks use the `usePassgage*` prefix for better discoverability and to avoid naming conflicts:
+
 - `usePassgageAuth()` - Authentication management
 - `usePassgageQRScanner()` - QR code validation
 - `usePassgageNFCScanner()` - NFC card validation

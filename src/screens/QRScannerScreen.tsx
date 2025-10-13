@@ -4,7 +4,7 @@ import {usePassgageQRScanner} from '@passgage/sdk-react-native';
 
 export default function QRScannerScreen() {
   const [qrCode, setQrCode] = useState('');
-  const {validateQR, isLoading} = usePassgageQRScanner();
+  const {scan, isLoading} = usePassgageQRScanner();
 
   const handleScan = async () => {
     if (!qrCode.trim()) {
@@ -12,19 +12,12 @@ export default function QRScannerScreen() {
       return;
     }
 
-    const result = await validateQR({
-      qrCode: qrCode.trim(),
-      device: {
-        id: 'demo-device',
-        name: 'Demo Device',
-      },
-    });
-
-    if (result.success) {
-      Alert.alert('Success', `Access granted! Entrance ID: ${result.data.entrance.id}`);
+    try {
+      await scan(qrCode.trim());
+      Alert.alert('Success', 'QR code validated successfully!');
       setQrCode('');
-    } else {
-      Alert.alert('Failed', result.error);
+    } catch (error: any) {
+      Alert.alert('Failed', error.message || 'QR validation failed');
     }
   };
 

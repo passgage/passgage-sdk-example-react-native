@@ -4,27 +4,20 @@ import {usePassgageNFCScanner} from '@passgage/sdk-react-native';
 
 export default function NFCScannerScreen() {
   const [nfcCode, setNfcCode] = useState('');
-  const {validateNFC, isLoading} = usePassgageNFCScanner();
+  const {startScanning, isScanning} = usePassgageNFCScanner({
+    onSuccess: () => {
+      Alert.alert('Success', 'NFC card validated successfully!');
+    },
+    onError: (error) => {
+      Alert.alert('Failed', error.message || 'NFC validation failed');
+    },
+  });
 
   const handleScan = async () => {
-    if (!nfcCode.trim()) {
-      Alert.alert('Error', 'Please enter an NFC code');
-      return;
-    }
-
-    const result = await validateNFC({
-      nfcCode: nfcCode.trim(),
-      device: {
-        id: 'demo-device',
-        name: 'Demo Device',
-      },
-    });
-
-    if (result.success) {
-      Alert.alert('Success', `Access granted! Entrance ID: ${result.data.entrance.id}`);
-      setNfcCode('');
-    } else {
-      Alert.alert('Failed', result.error);
+    try {
+      await startScanning();
+    } catch (error: any) {
+      Alert.alert('Failed', error.message || 'NFC scanning failed');
     }
   };
 
@@ -44,18 +37,18 @@ export default function NFCScannerScreen() {
             value={nfcCode}
             onChangeText={setNfcCode}
             autoCapitalize="none"
-            editable={!isLoading}
+            editable={!isScanning}
           />
         </View>
 
         <TouchableOpacity
-          style={[styles.button, isLoading && styles.buttonDisabled]}
+          style={[styles.button, isScanning && styles.buttonDisabled]}
           onPress={handleScan}
-          disabled={isLoading}>
-          {isLoading ? (
+          disabled={isScanning}>
+          {isScanning ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <Text style={styles.buttonText}>Validate NFC Card</Text>
+            <Text style={styles.buttonText}>Scan NFC Card</Text>
           )}
         </TouchableOpacity>
 
