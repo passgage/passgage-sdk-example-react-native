@@ -4,7 +4,21 @@ import {usePassgageQRScanner} from '@passgage/sdk-react-native';
 
 export default function QRScannerScreen() {
   const [qrCode, setQrCode] = useState('');
-  const {scan, isLoading} = usePassgageQRScanner();
+  const [lastScanResult, setLastScanResult] = useState<string | null>(null);
+
+  const {scan, isLoading} = usePassgageQRScanner({
+    onSuccess: (entrance) => {
+      const message = `Access granted!\nEntrance ID: ${entrance?.id || 'N/A'}`;
+      setLastScanResult(message);
+      Alert.alert('Success', message);
+      setQrCode('');
+    },
+    onError: (error) => {
+      const errorMessage = error.message || 'QR validation failed';
+      setLastScanResult(`Error: ${errorMessage}`);
+      Alert.alert('Failed', errorMessage);
+    },
+  });
 
   const handleScan = async () => {
     if (!qrCode.trim()) {
@@ -12,13 +26,19 @@ export default function QRScannerScreen() {
       return;
     }
 
+    setLastScanResult(null);
+
     try {
       await scan(qrCode.trim());
-      Alert.alert('Success', 'QR code validated successfully!');
-      setQrCode('');
     } catch (error: any) {
-      Alert.alert('Failed', error.message || 'QR validation failed');
+      // Error already handled by onError callback
+      console.error('QR scan error:', error);
     }
+  };
+
+  const handleClear = () => {
+    setQrCode('');
+    setLastScanResult(null);
   };
 
   return (
@@ -38,23 +58,52 @@ export default function QRScannerScreen() {
             onChangeText={setQrCode}
             autoCapitalize="none"
             editable={!isLoading}
+            returnKeyType="done"
+            onSubmitEditing={handleScan}
           />
         </View>
 
-        <TouchableOpacity
-          style={[styles.button, isLoading && styles.buttonDisabled]}
-          onPress={handleScan}
-          disabled={isLoading}>
-          {isLoading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.buttonText}>Validate QR Code</Text>
+        <View style={styles.buttonContainer}>
+          <TouchableOpacity
+            style={[styles.button, styles.scanButton, isLoading && styles.buttonDisabled]}
+            onPress={handleScan}
+            disabled={isLoading || !qrCode.trim()}>
+            {isLoading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.buttonText}>Validate QR Code</Text>
+            )}
+          </TouchableOpacity>
+
+          {qrCode.trim() && !isLoading && (
+            <TouchableOpacity
+              style={[styles.button, styles.clearButton]}
+              onPress={handleClear}>
+              <Text style={styles.clearButtonText}>Clear</Text>
+            </TouchableOpacity>
           )}
-        </TouchableOpacity>
+        </View>
+
+        {lastScanResult && (
+          <View style={[
+            styles.resultContainer,
+            lastScanResult.startsWith('Error') ? styles.errorResult : styles.successResult
+          ]}>
+            <Text style={[
+              styles.resultText,
+              lastScanResult.startsWith('Error') ? styles.errorText : styles.successText
+            ]}>
+              {lastScanResult}
+            </Text>
+          </View>
+        )}
 
         <View style={styles.info}>
           <Text style={styles.infoText}>
             💡 In a real app, you would use react-native-vision-camera to scan QR codes with the camera
+          </Text>
+          <Text style={styles.infoText}>
+            {'\n'}For testing, you can enter any QR code value manually
           </Text>
         </View>
       </View>
@@ -102,13 +151,24 @@ const styles = StyleSheet.create({
     fontSize: 16,
     backgroundColor: '#fff',
   },
+  buttonContainer: {
+    width: '100%',
+    gap: 10,
+  },
   button: {
     width: '100%',
     height: 50,
-    backgroundColor: '#007AFF',
     borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  scanButton: {
+    backgroundColor: '#007AFF',
+  },
+  clearButton: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#007AFF',
   },
   buttonDisabled: {
     opacity: 0.6,
@@ -117,6 +177,37 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  clearButtonText: {
+    color: '#007AFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  resultContainer: {
+    width: '100%',
+    marginTop: 20,
+    padding: 15,
+    borderRadius: 8,
+  },
+  successResult: {
+    backgroundColor: '#d4edda',
+    borderWidth: 1,
+    borderColor: '#c3e6cb',
+  },
+  errorResult: {
+    backgroundColor: '#f8d7da',
+    borderWidth: 1,
+    borderColor: '#f5c6cb',
+  },
+  resultText: {
+    fontSize: 14,
+    textAlign: 'center',
+  },
+  successText: {
+    color: '#155724',
+  },
+  errorText: {
+    color: '#721c24',
   },
   info: {
     marginTop: 30,

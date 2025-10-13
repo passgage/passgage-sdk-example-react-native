@@ -8,7 +8,7 @@
 import React from 'react';
 import {NavigationContainer} from '@react-navigation/native';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
-import {PassgageAccessProvider, usePassgageAuth} from 'passgage-access-sdk-react-native';
+import {PassgageAccessProvider, usePassgageAuth} from '@passgage/sdk-react-native';
 import {Alert, ActivityIndicator, View, StyleSheet} from 'react-native';
 
 // Screens

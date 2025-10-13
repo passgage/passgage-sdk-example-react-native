@@ -7,23 +7,38 @@ export default function CheckInScreen() {
   const {getNearbyBranches, checkInEntry, checkInExit, isLoading} = usePassgageCheckIn();
   const [branches, setBranches] = useState<any[]>([]);
   const [loadingBranches, setLoadingBranches] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     loadBranches();
   }, []);
 
   const loadBranches = async () => {
-    setLoadingBranches(true);
-    const result = await getNearbyBranches({
-      radius: 5000, // 5km
-    });
-
-    if (result.success) {
-      setBranches(result.data);
-    } else {
-      Alert.alert('Error', 'Could not load nearby branches');
+    if (!user?.id) {
+      Alert.alert('Error', 'User not authenticated. Please login first.');
+      return;
     }
-    setLoadingBranches(false);
+
+    setLoadingBranches(true);
+    try {
+      const result = await getNearbyBranches({
+        radius: 5000, // 5km
+      });
+
+      if (result.success && result.data) {
+        setBranches(result.data);
+        if (result.data.length === 0) {
+          Alert.alert('No Branches', 'No branches found within 5km radius');
+        }
+      } else {
+        Alert.alert('Error', result.error || 'Could not load nearby branches');
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to load branches');
+    } finally {
+      setLoadingBranches(false);
+      setRefreshing(false);
+    }
   };
 
   const handleCheckIn = async (branchId: string, branchName: string) => {
@@ -32,15 +47,19 @@ export default function CheckInScreen() {
       return;
     }
 
-    const result = await checkInEntry({
-      branchId,
-      userId: user.id,
-    });
+    try {
+      const result = await checkInEntry({
+        branchId,
+        userId: user.id,
+      });
 
-    if (result.success) {
-      Alert.alert('Success', `Checked in to ${branchName}`);
-    } else {
-      Alert.alert('Failed', result.error);
+      if (result.success) {
+        Alert.alert('Success', `Checked in to ${branchName}`);
+      } else {
+        Alert.alert('Failed', result.error || 'Check-in failed');
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Check-in failed');
     }
   };
 
@@ -50,16 +69,25 @@ export default function CheckInScreen() {
       return;
     }
 
-    const result = await checkInExit({
-      branchId,
-      userId: user.id,
-    });
+    try {
+      const result = await checkInExit({
+        branchId,
+        userId: user.id,
+      });
 
-    if (result.success) {
-      Alert.alert('Success', `Checked out from ${branchName}`);
-    } else {
-      Alert.alert('Failed', result.error);
+      if (result.success) {
+        Alert.alert('Success', `Checked out from ${branchName}`);
+      } else {
+        Alert.alert('Failed', result.error || 'Check-out failed');
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Check-out failed');
     }
+  };
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    loadBranches();
   };
 
   const renderBranch = ({item}: {item: any}) => (
@@ -90,6 +118,21 @@ export default function CheckInScreen() {
     </View>
   );
 
+  const renderEmpty = () => (
+    <View style={styles.emptyContainer}>
+      <Text style={styles.emptyIcon}>📍</Text>
+      <Text style={styles.emptyTitle}>No Branches Found</Text>
+      <Text style={styles.emptyText}>
+        There are no branches within 5km of your location
+      </Text>
+      <TouchableOpacity style={styles.retryButton} onPress={loadBranches} disabled={loadingBranches}>
+        <Text style={styles.retryText}>
+          {loadingBranches ? 'Loading...' : 'Retry'}
+        </Text>
+      </TouchableOpacity>
+    </View>
+  );
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -98,28 +141,29 @@ export default function CheckInScreen() {
         <Text style={styles.description}>
           Check in or out from nearby branches
         </Text>
+        {user && (
+          <View style={styles.userInfo}>
+            <Text style={styles.userText}>
+              👤 {user.fullName || user.email}
+            </Text>
+          </View>
+        )}
       </View>
 
-      {loadingBranches ? (
+      {loadingBranches && branches.length === 0 ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#34C759" />
           <Text style={styles.loadingText}>Loading nearby branches...</Text>
-        </View>
-      ) : branches.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>No nearby branches found</Text>
-          <TouchableOpacity style={styles.retryButton} onPress={loadBranches}>
-            <Text style={styles.retryText}>Retry</Text>
-          </TouchableOpacity>
         </View>
       ) : (
         <FlatList
           data={branches}
           renderItem={renderBranch}
           keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.listContainer}
-          refreshing={loadingBranches}
-          onRefresh={loadBranches}
+          contentContainerStyle={branches.length === 0 ? styles.emptyListContainer : styles.listContainer}
+          ListEmptyComponent={renderEmpty}
+          refreshing={refreshing}
+          onRefresh={onRefresh}
         />
       )}
     </View>
@@ -153,14 +197,31 @@ const styles = StyleSheet.create({
     color: '#666',
     textAlign: 'center',
   },
+  userInfo: {
+    marginTop: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#f0f9ff',
+    borderRadius: 6,
+  },
+  userText: {
+    fontSize: 13,
+    color: '#0066cc',
+    fontWeight: '500',
+  },
   listContainer: {
     padding: 15,
+  },
+  emptyListContainer: {
+    flexGrow: 1,
   },
   branchCard: {
     backgroundColor: '#fff',
     borderRadius: 12,
     padding: 15,
     marginBottom: 12,
+    borderLeftWidth: 4,
+    borderLeftColor: '#34C759',
     shadowColor: '#000',
     shadowOffset: {width: 0, height: 1},
     shadowOpacity: 0.1,
@@ -222,22 +283,34 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    padding: 40,
+  },
+  emptyIcon: {
+    fontSize: 80,
+    marginBottom: 20,
+  },
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 10,
   },
   emptyText: {
     fontSize: 16,
     color: '#999',
-    marginBottom: 20,
+    textAlign: 'center',
+    marginBottom: 30,
+    lineHeight: 24,
   },
   retryButton: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
+    paddingHorizontal: 30,
+    paddingVertical: 12,
     backgroundColor: '#34C759',
     borderRadius: 8,
   },
   retryText: {
     color: '#fff',
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '600',
   },
 });

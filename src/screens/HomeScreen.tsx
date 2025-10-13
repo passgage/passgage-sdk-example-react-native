@@ -12,14 +12,18 @@ export default function HomeScreen() {
   const {user, logout} = usePassgageAuth();
 
   const handleLogout = () => {
-    Alert.alert('Logout', 'Are you sure you want to logout?', [
-      {text: 'Cancel', style: 'cancel'},
-      {
-        text: 'Logout',
-        style: 'destructive',
-        onPress: () => logout(),
-      },
-    ]);
+    Alert.alert(
+      'Logout',
+      'Are you sure you want to logout?',
+      [
+        {text: 'Cancel', style: 'cancel'},
+        {
+          text: 'Logout',
+          style: 'destructive',
+          onPress: () => logout(),
+        },
+      ]
+    );
   };
 
   const features = [
@@ -58,11 +62,39 @@ export default function HomeScreen() {
       <View style={styles.header}>
         <Text style={styles.welcome}>Welcome!</Text>
         <Text style={styles.userName}>{user?.fullName || user?.email}</Text>
-        <Text style={styles.company}>{user?.company?.name}</Text>
+        {user?.company?.name && (
+          <Text style={styles.company}>{user.company.name}</Text>
+        )}
+      </View>
+
+      <View style={styles.userDetails}>
+        <View style={styles.userDetailRow}>
+          <Text style={styles.detailLabel}>Email:</Text>
+          <Text style={styles.detailValue}>{user?.email || 'N/A'}</Text>
+        </View>
+        {user?.gsm && (
+          <View style={styles.userDetailRow}>
+            <Text style={styles.detailLabel}>Phone:</Text>
+            <Text style={styles.detailValue}>{user.gsm}</Text>
+          </View>
+        )}
+        {user?.jobTitle && (
+          <View style={styles.userDetailRow}>
+            <Text style={styles.detailLabel}>Job Title:</Text>
+            <Text style={styles.detailValue}>{user.jobTitle}</Text>
+          </View>
+        )}
+        <View style={styles.tokenIndicator}>
+          <Text style={styles.tokenIcon}>🔐</Text>
+          <Text style={styles.tokenText}>JWT Token Active</Text>
+        </View>
       </View>
 
       <View style={styles.featuresContainer}>
         <Text style={styles.sectionTitle}>Features</Text>
+        <Text style={styles.sectionSubtitle}>
+          All requests automatically include your authentication token
+        </Text>
 
         {features.map((feature, index) => (
           <TouchableOpacity
@@ -81,12 +113,25 @@ export default function HomeScreen() {
         ))}
       </View>
 
+      <View style={styles.infoSection}>
+        <Text style={styles.infoTitle}>🔒 Security</Text>
+        <Text style={styles.infoText}>
+          • Your JWT token is securely stored{'\n'}
+          • All API requests are encrypted (TLS 1.2+){'\n'}
+          • Tokens auto-refresh when expired{'\n'}
+          • User info is cached locally
+        </Text>
+      </View>
+
       <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
         <Text style={styles.logoutText}>Logout</Text>
       </TouchableOpacity>
 
       <View style={styles.footer}>
-        <Text style={styles.footerText}>Passgage SDK v1.0.0</Text>
+        <Text style={styles.footerText}>
+          Passgage SDK v1.0.4{'\n'}
+          @passgage/sdk-react-native
+        </Text>
       </View>
     </ScrollView>
   );
@@ -118,13 +163,66 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: 'rgba(255,255,255,0.8)',
   },
+  userDetails: {
+    backgroundColor: '#fff',
+    margin: 15,
+    marginBottom: 10,
+    borderRadius: 12,
+    padding: 15,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 1},
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  userDetailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  detailLabel: {
+    fontSize: 14,
+    color: '#666',
+    fontWeight: '500',
+  },
+  detailValue: {
+    fontSize: 14,
+    color: '#333',
+    fontWeight: '600',
+  },
+  tokenIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 15,
+    paddingTop: 15,
+    borderTopWidth: 1,
+    borderTopColor: '#f0f0f0',
+  },
+  tokenIcon: {
+    fontSize: 16,
+    marginRight: 8,
+  },
+  tokenText: {
+    fontSize: 13,
+    color: '#34C759',
+    fontWeight: '600',
+  },
   featuresContainer: {
-    padding: 20,
+    padding: 15,
+    paddingTop: 5,
   },
   sectionTitle: {
     fontSize: 20,
     fontWeight: 'bold',
     color: '#333',
+    marginBottom: 5,
+  },
+  sectionSubtitle: {
+    fontSize: 13,
+    color: '#666',
     marginBottom: 15,
   },
   featureCard: {
@@ -171,9 +269,29 @@ const styles = StyleSheet.create({
     color: '#ccc',
     marginLeft: 10,
   },
+  infoSection: {
+    margin: 15,
+    marginTop: 5,
+    padding: 15,
+    backgroundColor: '#e8f4ff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#cce5ff',
+  },
+  infoTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#007AFF',
+    marginBottom: 10,
+  },
+  infoText: {
+    fontSize: 13,
+    color: '#333',
+    lineHeight: 20,
+  },
   logoutButton: {
     backgroundColor: '#fff',
-    margin: 20,
+    margin: 15,
     marginTop: 10,
     padding: 15,
     borderRadius: 8,
@@ -193,5 +311,7 @@ const styles = StyleSheet.create({
   footerText: {
     color: '#999',
     fontSize: 12,
+    textAlign: 'center',
+    lineHeight: 18,
   },
 });
