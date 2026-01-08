@@ -1,37 +1,60 @@
-import React from 'react';
-import {View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert} from 'react-native';
-import {useNavigation} from '@react-navigation/native';
-import {usePassgageAuth} from '@passgage/sdk-react-native';
-import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
-import type {RootStackParamList} from '../../App';
+import React, { useEffect, useState } from 'react';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  ScrollView,
+  Alert,
+} from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { RootStackParamList } from '../../App';
+import { useAuthStore } from '@passgage/sdk-react-native';
+
+import { Camera, CameraPermissionStatus } from 'react-native-vision-camera';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 export default function HomeScreen() {
   const navigation = useNavigation<NavigationProp>();
-  const {user, logout} = usePassgageAuth();
+  const [permission, setPermission] =
+    useState<CameraPermissionStatus>('not-determined');
+
+  useEffect(() => {
+    (async () => {
+      const status = await Camera.requestCameraPermission();
+      setPermission(status);
+    })();
+  }, []);
+
+  const { user, logout } = useAuthStore();
 
   const handleLogout = () => {
-    Alert.alert(
-      'Logout',
-      'Are you sure you want to logout?',
-      [
-        {text: 'Cancel', style: 'cancel'},
-        {
-          text: 'Logout',
-          style: 'destructive',
-          onPress: () => logout(),
-        },
-      ]
-    );
+    Alert.alert('Logout', 'Are you sure you want to logout?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Logout',
+        style: 'destructive',
+        onPress: () => logout(),
+      },
+    ]);
   };
 
   const features = [
     {
       title: 'QR Scanner',
-      description: 'Scan QR codes for access control',
+      description: 'Enter QR codes for access control',
       icon: '📱',
       screen: 'QRScanner' as const,
+      color: '#007AFF',
+    },
+    {
+      title: 'QR Scanner Camera',
+      description: 'Scan QR codes for access control',
+      icon: '📱',
+      screen: 'QRScannerCamera' as const,
       color: '#007AFF',
     },
     {
@@ -41,20 +64,20 @@ export default function HomeScreen() {
       screen: 'NFCScanner' as const,
       color: '#FF9500',
     },
-    {
-      title: 'Check-In',
-      description: 'Location-based attendance tracking',
-      icon: '📍',
-      screen: 'CheckIn' as const,
-      color: '#34C759',
-    },
-    {
-      title: 'Remote Work',
-      description: 'Log remote work entries and exits',
-      icon: '🏠',
-      screen: 'RemoteWork' as const,
-      color: '#AF52DE',
-    },
+    // {
+    //   title: 'Check-In',
+    //   description: 'Location-based attendance tracking',
+    //   icon: '📍',
+    //   screen: 'CheckIn' as const,
+    //   color: '#34C759',
+    // },
+    // {
+    //   title: 'Remote Work',
+    //   description: 'Log remote work entries and exits',
+    //   icon: '🏠',
+    //   screen: 'RemoteWork' as const,
+    //   color: '#AF52DE',
+    // },
   ];
 
   return (
@@ -99,14 +122,17 @@ export default function HomeScreen() {
         {features.map((feature, index) => (
           <TouchableOpacity
             key={index}
-            style={[styles.featureCard, {borderLeftColor: feature.color}]}
-            onPress={() => navigation.navigate(feature.screen)}>
+            style={[styles.featureCard, { borderLeftColor: feature.color }]}
+            onPress={() => navigation.navigate(feature.screen)}
+          >
             <View style={styles.featureIcon}>
               <Text style={styles.iconText}>{feature.icon}</Text>
             </View>
             <View style={styles.featureContent}>
               <Text style={styles.featureTitle}>{feature.title}</Text>
-              <Text style={styles.featureDescription}>{feature.description}</Text>
+              <Text style={styles.featureDescription}>
+                {feature.description}
+              </Text>
             </View>
             <Text style={styles.arrow}>›</Text>
           </TouchableOpacity>
@@ -116,10 +142,9 @@ export default function HomeScreen() {
       <View style={styles.infoSection}>
         <Text style={styles.infoTitle}>🔒 Security</Text>
         <Text style={styles.infoText}>
-          • Your JWT token is securely stored{'\n'}
-          • All API requests are encrypted (TLS 1.2+){'\n'}
-          • Tokens auto-refresh when expired{'\n'}
-          • User info is cached locally
+          • Your JWT token is securely stored{'\n'}• All API requests are
+          encrypted (TLS 1.2+){'\n'}• Tokens auto-refresh when expired{'\n'}•
+          User info is cached locally
         </Text>
       </View>
 
@@ -170,7 +195,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 15,
     shadowColor: '#000',
-    shadowOffset: {width: 0, height: 1},
+    shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 3,
     elevation: 2,
@@ -234,7 +259,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     borderLeftWidth: 4,
     shadowColor: '#000',
-    shadowOffset: {width: 0, height: 1},
+    shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 3,
     elevation: 2,

@@ -1,8 +1,7 @@
-import React, {useState} from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
-  TextInput,
   TouchableOpacity,
   StyleSheet,
   Alert,
@@ -11,39 +10,47 @@ import {
   Platform,
   ScrollView,
 } from 'react-native';
-import {usePassgageAuth} from '@passgage/sdk-react-native';
+import { useAuthStore } from '@passgage/sdk-react-native';
+import { authorize } from 'react-native-app-auth';
 
-export default function LoginScreen() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const {login, isLoading, error} = usePassgageAuth({
-    onLoginSuccess: (user) => {
-      console.log('Login successful:', user?.fullName);
-    },
-    onLoginError: (error) => {
-      Alert.alert('Login Failed', error.message);
-    },
-  });
+const LoginScreen = () => {
+  const { loading, error, loginWithAzure } = useAuthStore();
 
   const handleLogin = async () => {
-    if (!email.trim() || !password.trim()) {
-      Alert.alert('Error', 'Please enter both email and password');
-      return;
+    try {
+      const result = await authorize({
+        additionalParameters: { prompt: 'select_account' },
+        serviceConfiguration: {
+          authorizationEndpoint: `https://login.microsoftonline.com/4a99ff32-0378-4ce4-b7d7-04ef1f36caf9/oauth2/v2.0/authorize`,
+          tokenEndpoint: `https://login.microsoftonline.com/4a99ff32-0378-4ce4-b7d7-04ef1f36caf9/oauth2/v2.0/token`,
+        },
+        clientId: '5f13afcc-94a3-4ad5-9e18-3854de9a3cbb',
+        redirectUrl:
+          Platform.OS === 'android'
+            ? 'msauth://com.passgagesdkexample/7S3BCp7Q9Sa1Em%2FLqQ13AjoP5Lw%3D'
+            : 'msauth.com.passgage.sdkexample://auth/',
+        scopes: ['openid', 'profile', 'offline_access', 'User.Read'],
+        iosPrefersEphemeralSession: true,
+      });
+      if (result?.idToken) {
+        loginWithAzure({ id_token: result.idToken });
+      } else {
+        Alert.alert('Login Failed', 'No ID token received');
+      }
+    } catch (error) {
+      console.error('Login failed:', error);
     }
-
-    await login({
-      login: email.trim(),
-      password: password,
-    });
   };
 
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}>
+      style={styles.container}
+    >
       <ScrollView
         contentContainerStyle={styles.scrollContainer}
-        keyboardShouldPersistTaps="handled">
+        keyboardShouldPersistTaps="handled"
+      >
         <View style={styles.logoContainer}>
           <Text style={styles.logo}>🔐</Text>
           <Text style={styles.title}>Passgage SDK Demo</Text>
@@ -51,42 +58,18 @@ export default function LoginScreen() {
         </View>
 
         <View style={styles.formContainer}>
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Email or Phone</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter your email or phone"
-              value={email}
-              onChangeText={setEmail}
-              autoCapitalize="none"
-              keyboardType="email-address"
-              editable={!isLoading}
-            />
-          </View>
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Password</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter your password"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-              editable={!isLoading}
-            />
-          </View>
-
           {error && (
             <View style={styles.errorContainer}>
-              <Text style={styles.errorText}>{error.message}</Text>
+              <Text style={styles.errorText}>{error}</Text>
             </View>
           )}
 
           <TouchableOpacity
-            style={[styles.button, isLoading && styles.buttonDisabled]}
+            style={[styles.button, loading && styles.buttonDisabled]}
             onPress={handleLogin}
-            disabled={isLoading}>
-            {isLoading ? (
+            disabled={loading}
+          >
+            {loading ? (
               <ActivityIndicator color="#fff" />
             ) : (
               <Text style={styles.buttonText}>Sign In</Text>
@@ -102,7 +85,9 @@ export default function LoginScreen() {
       </ScrollView>
     </KeyboardAvoidingView>
   );
-}
+};
+
+export default LoginScreen;
 
 const styles = StyleSheet.create({
   container: {
@@ -137,7 +122,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 20,
     shadowColor: '#000',
-    shadowOffset: {width: 0, height: 2},
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 8,
     elevation: 3,

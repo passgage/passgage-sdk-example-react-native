@@ -1,4 +1,4 @@
-package com.passgagetempapp
+package com.passgagesdkexample
 
 import android.app.Application
 import com.facebook.react.PackageList

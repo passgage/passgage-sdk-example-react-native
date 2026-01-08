@@ -1,19 +1,27 @@
-import React, {useState} from 'react';
-import {View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ActivityIndicator} from 'react-native';
-import {usePassgageQRScanner} from '@passgage/sdk-react-native';
+import React, { useState } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  Alert,
+  ActivityIndicator,
+} from 'react-native';
+import { usePassgageQRScanner } from '@passgage/sdk-react-native';
 
 export default function QRScannerScreen() {
-  const [qrCode, setQrCode] = useState('');
+  const [qrCode, setQrCode] = useState('c70fc3a2-fbfb-4ca6-adcb-71ac0b796836');
   const [lastScanResult, setLastScanResult] = useState<string | null>(null);
 
-  const {scan, isLoading} = usePassgageQRScanner({
-    onSuccess: (entrance) => {
+  const { scan, isLoading } = usePassgageQRScanner({
+    options: { skipLocationCheck: false, skipRepetitiveCheck: false },
+    onSuccess: entrance => {
       const message = `Access granted!\nEntrance ID: ${entrance?.id || 'N/A'}`;
       setLastScanResult(message);
       Alert.alert('Success', message);
-      setQrCode('');
     },
-    onError: (error) => {
+    onError: error => {
       const errorMessage = error.message || 'QR validation failed';
       setLastScanResult(`Error: ${errorMessage}`);
       Alert.alert('Failed', errorMessage);
@@ -65,9 +73,14 @@ export default function QRScannerScreen() {
 
         <View style={styles.buttonContainer}>
           <TouchableOpacity
-            style={[styles.button, styles.scanButton, isLoading && styles.buttonDisabled]}
+            style={[
+              styles.button,
+              styles.scanButton,
+              isLoading && styles.buttonDisabled,
+            ]}
             onPress={handleScan}
-            disabled={isLoading || !qrCode.trim()}>
+            disabled={isLoading || !qrCode.trim()}
+          >
             {isLoading ? (
               <ActivityIndicator color="#fff" />
             ) : (
@@ -78,21 +91,30 @@ export default function QRScannerScreen() {
           {qrCode.trim() && !isLoading && (
             <TouchableOpacity
               style={[styles.button, styles.clearButton]}
-              onPress={handleClear}>
+              onPress={handleClear}
+            >
               <Text style={styles.clearButtonText}>Clear</Text>
             </TouchableOpacity>
           )}
         </View>
 
         {lastScanResult && (
-          <View style={[
-            styles.resultContainer,
-            lastScanResult.startsWith('Error') ? styles.errorResult : styles.successResult
-          ]}>
-            <Text style={[
-              styles.resultText,
-              lastScanResult.startsWith('Error') ? styles.errorText : styles.successText
-            ]}>
+          <View
+            style={[
+              styles.resultContainer,
+              lastScanResult.startsWith('Error')
+                ? styles.errorResult
+                : styles.successResult,
+            ]}
+          >
+            <Text
+              style={[
+                styles.resultText,
+                lastScanResult.startsWith('Error')
+                  ? styles.errorText
+                  : styles.successText,
+              ]}
+            >
               {lastScanResult}
             </Text>
           </View>
@@ -100,7 +122,8 @@ export default function QRScannerScreen() {
 
         <View style={styles.info}>
           <Text style={styles.infoText}>
-            💡 In a real app, you would use react-native-vision-camera to scan QR codes with the camera
+            💡 In a real app, you would use react-native-vision-camera to scan
+            QR codes with the camera
           </Text>
           <Text style={styles.infoText}>
             {'\n'}For testing, you can enter any QR code value manually

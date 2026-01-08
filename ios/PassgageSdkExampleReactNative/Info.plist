@@ -2,12 +2,14 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Kamera erişimi gereklidir</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>Passgage SDK Example</string>
+	<string>PassgageSdkExampleReactNative</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -26,16 +28,44 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
+			<string>
+				msauth.com.passgage.sdkexample
+			</string>
+			</array>
+		</dict>
+	</array> 
 	<key>NSAppTransportSecurity</key>
 	<dict>
-	  <!-- Do not change NSAllowsArbitraryLoads to true, or you will risk app rejection! -->
 		<key>NSAllowsArbitraryLoads</key>
 		<false/>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string></string>
+	<string>QR ve NFC dogrulamasi icin gereklidir</string>
+	<key>NFCReaderUsageDescription</key>
+	<string>We need NFC access to scan employee cards</string>
+	<key>com.apple.developer.nfc.readersession.MIFARE.select-identifiers</key>
+ 	<array>
+		<string>D2760000850100</string>
+		<string>D2760000850101</string>
+		<string>A0000002471001</string>
+		<string>D4100000030001</string>
+		<string>A000000003101001</string>
+		<string>A000000003101002</string>
+		<string>A0000000041010</string>
+		<string>A0000000042010</string>
+		<string>A0000000044010</string>
+		<string>44464D46412E44466172653234313031</string>
+		<string>00000000000000</string>
+	</array>
+	<key>RCTNewArchEnabled</key>
+	<true/>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIRequiredDeviceCapabilities</key>
