@@ -77,13 +77,16 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace "com.passgagetempapp"
+    namespace "com.passgagesdkexample"
     defaultConfig {
-        applicationId "com.passgagetempapp"
+        applicationId "com.passgagesdkexample"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
+        manifestPlaceholders = [
+            appAuthRedirectScheme: 'com.passgagesdkexample'
+        ]
     }
     signingConfigs {
         debug {

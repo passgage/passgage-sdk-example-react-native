@@ -1,30 +1,37 @@
-import React, {useState} from 'react';
-import {View, Text, TouchableOpacity, StyleSheet, Alert, ActivityIndicator} from 'react-native';
-import {usePassgageNFCScanner} from '@passgage/sdk-react-native';
+import React, { useState } from 'react';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  Alert,
+  ActivityIndicator,
+} from 'react-native';
+
+import { usePassgageNFCScanner } from '@passgage/sdk-react-native';
 
 export default function NFCScannerScreen() {
   const [lastScanResult, setLastScanResult] = useState<string | null>(null);
 
-  const {startScanning, stopScanning, isScanning, error} = usePassgageNFCScanner({
-    onSuccess: (entrance) => {
-      const message = `Access granted!\nEntrance ID: ${entrance?.id || 'N/A'}`;
-      setLastScanResult(message);
-      Alert.alert('Success', message);
-    },
-    onError: (error) => {
-      const errorMessage = error.message || 'NFC validation failed';
-      setLastScanResult(`Error: ${errorMessage}`);
-      Alert.alert('Failed', errorMessage);
-    },
-  });
+  const { supportNFC, startScanning, stopScanning, isScanning, error } =
+    usePassgageNFCScanner({
+      options: { skipLocationCheck: false, skipRepetitiveCheck: false },
+      onSuccess: entrance => {
+        const message = `Access granted!\nEntrance ID: ${
+          entrance?.id || 'N/A'
+        }`;
+        setLastScanResult(message);
+        Alert.alert('Success', message);
+      },
+      onError: error => {
+        const errorMessage = error.message || 'NFC validation failed';
+        setLastScanResult(`Error: ${errorMessage}`);
+        // Alert.alert('Failed', errorMessage);
+      },
+    });
 
   const handleStartScan = async () => {
-    setLastScanResult(null);
-    try {
-      await startScanning();
-    } catch (error: any) {
-      console.error('NFC scan error:', error);
-    }
+    startScanning();
   };
 
   const handleStopScan = async () => {
@@ -34,7 +41,6 @@ export default function NFCScannerScreen() {
       console.error('Stop NFC scan error:', error);
     }
   };
-
   return (
     <View style={styles.container}>
       <View style={styles.content}>
@@ -54,7 +60,13 @@ export default function NFCScannerScreen() {
             </>
           ) : (
             <View style={styles.readyIndicator}>
-              <Text style={styles.readyText}>Ready to scan</Text>
+              <Text style={styles.readyText}>
+                {supportNFC
+                  ? 'Ready to scan'
+                  : supportNFC === false
+                  ? 'Device not support NFC'
+                  : 'LOADING...'}
+              </Text>
             </View>
           )}
         </View>
@@ -63,27 +75,39 @@ export default function NFCScannerScreen() {
           {!isScanning ? (
             <TouchableOpacity
               style={[styles.button, styles.scanButton]}
-              onPress={handleStartScan}>
+              onPress={async () => {
+                handleStartScan();
+              }}
+            >
               <Text style={styles.buttonText}>Start NFC Scan</Text>
             </TouchableOpacity>
           ) : (
             <TouchableOpacity
               style={[styles.button, styles.stopButton]}
-              onPress={handleStopScan}>
+              onPress={handleStopScan}
+            >
               <Text style={styles.buttonText}>Stop Scanning</Text>
             </TouchableOpacity>
           )}
         </View>
 
         {lastScanResult && (
-          <View style={[
-            styles.resultContainer,
-            lastScanResult.startsWith('Error') ? styles.errorResult : styles.successResult
-          ]}>
-            <Text style={[
-              styles.resultText,
-              lastScanResult.startsWith('Error') ? styles.errorText : styles.successText
-            ]}>
+          <View
+            style={[
+              styles.resultContainer,
+              lastScanResult.startsWith('Error')
+                ? styles.errorResult
+                : styles.successResult,
+            ]}
+          >
+            <Text
+              style={[
+                styles.resultText,
+                lastScanResult.startsWith('Error')
+                  ? styles.errorText
+                  : styles.successText,
+              ]}
+            >
               {lastScanResult}
             </Text>
           </View>
@@ -91,9 +115,7 @@ export default function NFCScannerScreen() {
 
         {error && (
           <View style={styles.errorContainer}>
-            <Text style={styles.errorText}>
-              {error.message}
-            </Text>
+            <Text style={styles.errorText}>{error.message}</Text>
           </View>
         )}
 
