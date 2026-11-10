@@ -1,409 +1,134 @@
-# Frequently Asked Questions (FAQ)
+# FAQ
 
-Common questions and answers about the Passgage SDK.
+Answers for `@passgage/sdk-react-native` 1.0.21.
 
-## Table of Contents
+## Scanning
 
-- [General Questions](#general-questions)
-- [Installation & Setup](#installation--setup)
-- [Authentication](#authentication)
-- [Features](#features)
-- [Troubleshooting](#troubleshooting)
-- [Performance](#performance)
-- [Security](#security)
+### Why does the user get "You are not within the allowed range of this device" at the door?
 
-## General Questions
+That is `LOCATION_OUT_OF_RANGE`. The SDK compared the phone's location with the device's coordinates and the distance was larger than the device's range.
 
-### What is the Passgage SDK?
+- The range is a device setting in Passgage, in meters, and is separate for QR reads (`range_matter` / `range`) and NFC reads (`nfc_range_matter` / `nfc_range`). The check runs only when the matching `..._range_matter` is `'1'` and the device has a latitude and longitude.
+- When the range value is missing or not a positive number, 100 meters is used.
+- The location is read when the code is scanned. A location of at most 15 seconds ago is reused; otherwise the scan waits up to 10 seconds for a new one, and failing that accepts one of at most 5 minutes ago.
+- The accuracy of the GPS fix is not taken into account. Indoors a fix can be off by more than a small range.
+- `error.details` says how far away the phone was, for example `Distance: 240m`. Compare that with the device's range and coordinates.
 
-The Passgage SDK (@passgage/sdk-react-native) is a React Native library that provides access control, time tracking, and attendance management features for mobile applications.
+If the coordinates or the range of the device are wrong, fix them in Passgage. Before 1.0.21 the SDK used the location from when the app started, which often caused this message; update if you are on an older version.
 
-### Which platforms are supported?
+When there is no location at all, 1.0.21 reports `LOCATION_UNAVAILABLE` or `LOCATION_PERMISSION_DENIED`, not "out of range".
 
-- **iOS**: 13.0 and higher
-- **Android**: API level 23 (Android 6.0) and higher
-- **React Native**: 0.70 and higher
+### Does the API check the location too?
 
-### Is TypeScript supported?
+No. The API does not check the location, so the SDK does it on the phone before it sends the read. `skipLocationCheck: true` turns it off.
 
-Yes! The SDK is written in TypeScript and includes complete type definitions. You get full IntelliSense and type checking out of the box.
+### Does the SDK read the camera?
 
-### What features does the SDK provide?
+No. There is no camera component in the SDK. Read the code with any scanner (for example react-native-vision-camera's `useCodeScanner`) and pass the text to `scan(code)`. See [qr-scanner.md](./features/qr-scanner.md#wiring-a-camera).
 
-- JWT-based authentication with automatic token management
-- QR code scanning for access control
-- NFC card scanning for access control
-- Location-based check-in/check-out
-- Remote work time logging
-- Automatic location detection
-- Secure credential storage
+### The camera reports the same code many times. Will that create several entrances?
 
-### How much does the SDK cost?
+No. While one scan is running, further `scan` calls are ignored. After a successful read, the same code is refused for 30 seconds with `REPETITIVE_READ`. Stop the camera, or ignore its codes, once `onSuccess` has fired.
 
-The SDK is part of the Passgage platform. Contact sales@passgage.com for pricing information.
+### Can the user scan offline?
 
-### Can I use the SDK in a commercial app?
+No. The device lists come from the API, and every entrance is a request to the API (and an IoT door is opened by the API). Without network a scan fails with `NETWORK_ERROR`, or with `DEVICE_NOT_FOUND` if the device lists were never loaded. The SDK does not queue reads for later.
 
-Yes, the SDK can be used in commercial applications. Review the license terms or contact Passgage for licensing details.
+### Why "QR Device not found"?
 
-## Installation & Setup
+That is `DEVICE_NOT_FOUND`: no device in the user's list has this `qr_code_id` (for NFC: `nfc_code`). Common causes:
 
-### How do I install the SDK?
+- The code belongs to a device the user may not use, or to another company. The device list contains only the devices the user may use.
+- No session yet: the scan ran before sign-in or before the stored session was restored.
+- The lists could not be loaded (no network at start). Since 1.0.21 an unknown code reloads the lists when they are older than 30 seconds, so the next scan with network works. Before 1.0.21 the app had to be restarted.
+- A device added in Passgage a moment ago: the lists are refreshed when a code is unknown, and in the background when they are older than 10 minutes.
 
-```bash
-npm install @passgage/sdk-react-native
-# or
-yarn add @passgage/sdk-react-native
-```
+`qrScannerStore.getState().error` holds the message of a failed load.
 
-See the [Getting Started Guide](./getting-started.md) for complete installation instructions.
+### What does `REPETITIVE_READ` protect against, and can I turn it off?
 
-### What are the peer dependencies?
+It stops the same code from being recorded twice within 30 seconds, for example by a camera that keeps seeing the code. Only successful reads count, and the record lives in memory: it is cleared by `logout()` and by an app restart. `skipRepetitiveCheck: true` turns the check off.
 
-Required:
-- `@react-native-community/geolocation` - For location services
-- `react-native-keychain` - For secure storage
+### Does `skipLocationCheck` stop the location permission prompt?
 
-Optional (based on features you use):
-- `react-native-nfc-manager` - For NFC scanning
-- `react-native-vision-camera` - For QR scanning with camera
+No. It only skips the range check. The provider checks and, if needed, requests the location permission when it mounts.
 
-### Do I need to eject from Expo?
+### Does the SDK decide whether a read is an entry or an exit?
 
-Yes, currently the SDK requires native modules that are not available in Expo Go. You'll need to use a development build or bare React Native workflow.
+The SDK sends `device_id` and `read_method` (`qr` or `nfc`) to `entrances/create_from_qr`, nothing else. `QrDevice.direction` (`check_in`, `check_out`, `bidirectional`) shows how the device is set up, and the returned `Entrance` has `entrance_type`.
 
-### How do I get API credentials?
+### Can I use my own location for the range check?
 
-Contact your Passgage account administrator or support@passgage.com to get your API URL and API key.
+No. The range check uses the SDK's `locationStore`. `useLocation()` is a separate helper for your own screens and does not feed the check.
 
-### Can I use environment variables for configuration?
+### Can I run the checks without the hooks?
 
-Yes! We recommend using `react-native-config`:
+For NFC, `NfcAccessService.validateNFC({nfcCode, device})` runs the same flow as the NFC hook. `QRAccessService.createEntranceFromQR` and `QRAccessService.triggerIoTDevice` only make the API calls: they skip the access, repeated-read and range checks. For QR, use the hook.
 
-```typescript
-import Config from 'react-native-config';
+## NFC
 
-<PassgageAccessProvider
-  apiUrl={Config.PASSGAGE_API_URL}
-  apiKey={Config.PASSGAGE_API_KEY}
->
-  <App />
-</PassgageAccessProvider>
-```
+### What format does an NFC card code have?
 
-## Authentication
+The NFC library gives the tag id as hex (for example `04A1B2C3`). The SDK reverses the byte order and converts it to decimal (`C3B2A104` → `3283263748`) with `reversedHexToDec`. That decimal string is matched against the device's `nfc_code`. `nfcData` on the hook holds the raw tag id, not the converted code. See [nfc-scanner.md](./features/nfc-scanner.md#tag-id-and-device-code).
 
-### How does authentication work?
+### Do I have to call `NfcManager.start()`?
 
-The SDK uses JWT (JSON Web Token) based authentication:
+Yes, once, in an effect, before the first read. The hook does not call it.
 
-1. User logs in with username/password
-2. Backend returns access token and refresh token
-3. Tokens are securely stored using react-native-keychain
-4. Access token is automatically added to all API requests
-5. Expired tokens are automatically refreshed
+### How do I read several cards in a row?
 
-See the [Authentication Guide](./authentication.md) for details.
+`startScanning()` reads one tag. Call it again for the next one, after `isScanning` has turned `false`.
 
-### Are tokens automatically refreshed?
+## Sessions
 
-Yes! When an access token expires, the SDK automatically:
-1. Detects the 401 response
-2. Uses the refresh token to get a new access token
-3. Retries the original request
-4. Updates the stored tokens
+### How long does a user stay signed in?
 
-You don't need to handle token refresh manually.
+An access token is valid for 60 days and cannot be renewed after it has expired. When the app starts, the SDK renews a stored session that is older than 30 days. So a user who opens the app at least once in 60 days stays signed in. After 60 days without the app, the user signs in again. Details in [token-management.md](./token-management.md).
 
-### How long do tokens last?
+With `login({login, password, rememberUser: false})` the session is kept in memory only and is gone after a restart.
 
-- **Access Token**: Typically 1 hour
-- **Refresh Token**: Typically 30 days
+### What happens when the user also uses the Passgage app?
 
-Contact your backend team for exact expiration times.
+An account has one active mobile session at a time. Signing in through the SDK ends that user's session in the other app (for example the Passgage app), and the other way round. The SDK recovers on its next request by refreshing its token.
 
-### Where are credentials stored?
+### Why is `onUnauthorized` called when my app starts?
 
-Credentials are stored securely using `react-native-keychain`, which uses:
-- **iOS**: Keychain Services
-- **Android**: Keystore system
+Without `msalToken`, it is called when there is no stored session: first launch, after `logout()`, with `rememberUser={false}`, or when the stored session could not be renewed. Show your login screen. With `msalToken`, it is called when the Azure login fails. See [error-handling.md](./error-handling.md#onunauthorized).
 
-This provides hardware-backed security when available.
+### Where is the session stored?
 
-### Can users stay logged in between app restarts?
+In the Keychain (iOS) / Keystore (Android) through `react-native-keychain`, readable while the device is unlocked.
 
-Yes! The SDK persists tokens in secure storage. When the app restarts, the SDK automatically loads stored tokens and the user remains logged in (unless tokens have expired).
+## TypeScript
 
-### How do I implement "Remember Me" functionality?
+### What changed in the types in 1.0.21?
 
-The SDK implements this automatically. To force logout on app restart, clear tokens manually:
+The types now follow what the API sends:
 
-```typescript
-const {logout} = usePassgageAuth();
+- `QrDevice.name`, `description`, `company_id`, `branch_id`, `is_active`, `created_at` and `updated_at` are optional and marked deprecated: `devices/qr_devices` does not send them. Do not rely on `device.name` for display.
+- `QrDevice.range` and `nfc_range` are `number | string | null` (the API sends strings such as `"30"`).
+- `QrDevice.qr_code_id` is optional and, like `nfc_code`, `latitude`, `longitude`, `range_matter` and `nfc_range_matter`, can be `null` (a device without a QR code has no `qr_code_id`).
+- `QrDevice.direction` (`'check_in' | 'check_out' | 'bidirectional'`) is new.
+- `FlowResponseType.error` has a new optional `status`.
+- `TokenInfo.expiresIn` is optional and deprecated; the API sends `expires_in`, which is now on the type.
+- `LoginCredentials.rememberUser` is new (`false` keeps the session in memory only).
+- `QRAccessService.triggerIoTDevice` returns `BaseResponse`: its answer carries no entrance.
+- `AuthService.refreshToken(refreshToken, accessToken?)` takes the current access token as an optional second argument.
+- `LoginResult` and `RefreshTokenResult` failures carry `status`.
+- `PassgageAccessProvider`'s `msalToken` is optional.
 
-// On app close or logout
-await logout();
-```
+If your code read one of the now-optional fields, add a fallback, for example `device.name ?? device.id`.
 
-### Can I implement biometric authentication?
+### Which values can `error.code` have?
 
-Yes! Use `react-native-biometrics` to protect your login screen:
+See the table in [error-handling.md](./error-handling.md#every-scan-error-code). The API can also send its own codes, which arrive upper-cased, so keep a `default` branch.
 
-```typescript
-import ReactNativeBiometrics from 'react-native-biometrics';
+## Other
 
-const authenticateWithBiometrics = async () => {
-  const {success} = await ReactNativeBiometrics.simplePrompt({
-    promptMessage: 'Authenticate to login',
-  });
+### Where is the full setup?
 
-  if (success) {
-    // Proceed with auto-login using stored credentials
-    await login({username, password});
-  }
-};
-```
+[getting-started.md](./getting-started.md) for installation and the provider, [authentication.md](./authentication.md) for sign-in.
 
-## Features
+### Where do I get help?
 
-### Can I use only some features (e.g., just authentication)?
-
-Yes! All features are optional. You can use only the features you need:
-
-```typescript
-// Use only authentication
-import {usePassgageAuth} from '@passgage/sdk-react-native';
-
-// Or use specific features
-import {usePassgageQRScanner} from '@passgage/sdk-react-native';
-```
-
-### Does QR scanning require camera access?
-
-The SDK provides QR validation only. For actual camera scanning, integrate with `react-native-vision-camera`:
-
-```typescript
-import {Camera, useCodeScanner} from 'react-native-vision-camera';
-import {usePassgageQRScanner} from '@passgage/sdk-react-native';
-
-// Combine camera scanning with SDK validation
-const {scan} = usePassgageQRScanner();
-
-const codeScanner = useCodeScanner({
-  codeTypes: ['qr'],
-  onCodeScanned: (codes) => {
-    if (codes[0]?.value) {
-      scan(codes[0].value);
-    }
-  },
-});
-```
-
-### Does NFC scanning work on all devices?
-
-NFC is only available on devices with NFC hardware:
-- Most Android devices since 2012
-- iPhone 7 and newer (iOS 11+)
-
-Check NFC support before using:
-
-```typescript
-import NfcManager from 'react-native-nfc-manager';
-
-const supported = await NfcManager.isSupported();
-```
-
-### Can I customize the QR/NFC validation behavior?
-
-Yes, use callbacks to handle success/error cases:
-
-```typescript
-const {scan} = usePassgageQRScanner({
-  onSuccess: (entrance) => {
-    // Custom success handling
-    navigation.navigate('AccessGranted', {entrance});
-  },
-  onError: (error) => {
-    // Custom error handling
-    showCustomErrorModal(error.message);
-  },
-});
-```
-
-### How accurate is location-based check-in?
-
-Location accuracy depends on:
-- GPS signal quality (better outdoors)
-- Device GPS capability
-- Location permissions granted
-
-Typical accuracy: 5-50 meters outdoors, lower indoors.
-
-### Can users check in without being at the location?
-
-No. The backend validates that the user is within the configured radius (typically 100m) of the branch location. GPS spoofing detection may also be implemented server-side.
-
-### Does remote work logging require location?
-
-No, remote work logging doesn't require specific location. However, location may be recorded for audit purposes if available.
-
-## Troubleshooting
-
-### The SDK can't connect to the backend
-
-Check:
-1. API URL is correct and accessible
-2. API key is valid
-3. Device has internet connection
-4. Firewall/network isn't blocking the connection
-5. Backend service is running
-
-```typescript
-// Test connectivity
-fetch('https://your-api.passgage.com/health')
-  .then(() => console.log('Backend is reachable'))
-  .catch(() => console.error('Cannot reach backend'));
-```
-
-### Tokens keep expiring immediately
-
-Possible causes:
-1. Device clock is incorrect (check device time settings)
-2. Token expiration is too short (check backend config)
-3. Refresh token is not working (check backend logs)
-
-### Location services aren't working
-
-Check:
-1. Location permissions are granted
-2. Location services are enabled on device
-3. GPS has good signal (try going outdoors)
-4. Info.plist (iOS) / AndroidManifest.xml have required entries
-
-See [Getting Started](./getting-started.md#platform-specific-setup) for permission setup.
-
-### NFC scanning doesn't work
-
-Check:
-1. Device has NFC hardware
-2. NFC is enabled in device settings
-3. NFC permissions are granted
-4. Card is compatible (ISO 14443A/B or ISO 15693)
-5. Phone case isn't too thick
-
-### Build fails after installing SDK
-
-Try:
-1. Clean build: `cd ios && pod install && cd ..`
-2. Clear Metro cache: `npx react-native start --reset-cache`
-3. Clean native builds: `cd android && ./gradlew clean`
-4. Reinstall dependencies: `rm -rf node_modules && npm install`
-
-### App crashes on launch
-
-Check:
-1. All peer dependencies are installed
-2. Native linking is complete (run `pod install` on iOS)
-3. PassgageAccessProvider wraps your app correctly
-4. Review crash logs for specific errors
-
-## Performance
-
-### Does the SDK affect app performance?
-
-The SDK is optimized for minimal performance impact:
-- Small bundle size (~50KB gzipped)
-- Lazy loading of features
-- Efficient API calls with caching
-- Minimal memory footprint
-
-### How much does the SDK increase app size?
-
-Approximately:
-- **JavaScript**: ~50KB gzipped
-- **Native iOS**: ~100KB
-- **Native Android**: ~150KB
-
-Total impact: <300KB on app size.
-
-### Does the SDK work offline?
-
-Partially:
-- User info is cached (accessible offline)
-- QR/NFC validation requires internet (validates with backend)
-- Check-in/check-out requires internet
-- Remote work logging requires internet
-
-Authentication tokens persist offline, so users remain logged in.
-
-### How can I improve performance?
-
-1. **Enable caching** for frequently accessed data
-2. **Debounce** rapid API calls
-3. **Implement pagination** for lists
-4. **Use callbacks** instead of polling for state changes
-5. **Clear old data** periodically
-
-### Does the SDK drain battery?
-
-No significant battery drain. Location services use minimal power with "when in use" permission. No background processes run unless you implement them.
-
-## Security
-
-### Is the SDK secure?
-
-Yes, the SDK follows security best practices:
-- JWT tokens stored in hardware-backed secure storage
-- HTTPS for all network requests (TLS 1.2+)
-- No sensitive data in app logs
-- Automatic token refresh
-- Secure keychain storage
-
-See the [Security Guide](./security.md) for details.
-
-### Can tokens be stolen?
-
-Tokens are stored in the device's secure storage (Keychain/Keystore) which is encrypted and protected by the OS. Apps cannot access each other's keychain data.
-
-### How do I report a security issue?
-
-Email security@passgage.com with details. Do not post security issues publicly.
-
-### Are passwords stored locally?
-
-No. Passwords are never stored locally. They're only sent during login and immediately discarded after receiving tokens.
-
-### Does the SDK validate SSL certificates?
-
-Yes. All HTTPS connections validate SSL certificates. Certificate pinning can be implemented for extra security (contact support for details).
-
-### What data does the SDK collect?
-
-The SDK only collects data necessary for functionality:
-- User authentication credentials (during login only)
-- Location (when using check-in features)
-- Device info (for access audit logs)
-- Timestamps for attendance tracking
-
-No analytics or tracking data is collected by the SDK itself.
-
-### Is the SDK GDPR compliant?
-
-The SDK provides tools to build GDPR-compliant apps. Your implementation should:
-- Display privacy policy before data collection
-- Allow users to request data deletion
-- Obtain consent for location tracking
-- Provide data export functionality
-
-Contact Passgage for GDPR compliance guidance.
-
-## Still Have Questions?
-
-- Check the [Troubleshooting Guide](./troubleshooting.md)
-- Review the [Examples](./examples.md)
-- Contact support@passgage.com
-- Open an issue on GitHub
-
----
-
-**Can't find your question?** Submit it to docs@passgage.com and we'll add it to this FAQ.
+Check [troubleshooting.md](./troubleshooting.md) first. For support, contact devops@passgage.com.

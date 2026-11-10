@@ -1,506 +1,156 @@
 # Token Management
 
-Understanding how the Passgage SDK handles JWT tokens automatically.
+You do not need to manage tokens. The SDK stores the session, adds it to its requests, renews it, and ends it. Your app only signs the user in, logs the user out, and reacts to `initialized` and `authStatus` (see [Authentication](./authentication.md)).
 
-## Table of Contents
+This page explains what the SDK does, so you can reason about when a user stays signed in and when the login screen comes back.
 
-- [Overview](#overview)
-- [Token Flow](#token-flow)
-- [Automatic Token Injection](#automatic-token-injection)
-- [Automatic Token Refresh](#automatic-token-refresh)
-- [Token Storage](#token-storage)
-- [Security](#security)
-- [Advanced Usage](#advanced-usage)
+- [Tokens and lifetimes](#tokens-and-lifetimes)
+- [What is stored where](#what-is-stored-where)
+- [Restore at startup](#restore-at-startup)
+- [Renewal of older sessions](#renewal-of-older-sessions)
+- [401, refresh, replay](#401-refresh-replay)
+- [When the session ends](#when-the-session-ends)
+- [The iOS locked-device case](#the-ios-locked-device-case)
+- [Manual calls](#manual-calls)
 
-## Overview
+## Tokens and lifetimes
 
-The Passgage SDK uses JWT (JSON Web Tokens) for authentication. The SDK handles all token management automatically:
+A login (`login` or `loginWithAzure`) returns two tokens:
 
-- ✅ Secure storage
-- ✅ Automatic injection into requests
-- ✅ Automatic refresh when expired
-- ✅ Automatic retry of failed requests
-- ✅ Persistent sessions across app restarts
+| Token | Use |
+|-------|-----|
+| Access token | Sent as `Authorization: Bearer <token>` on every SDK request. Valid for 60 days |
+| Refresh token | Sent with the access token to get a new pair |
 
-**You never need to manually handle tokens!**
+The refresh request (`POST token`) sends `{token, refresh_token}`: the current access token and the refresh token. The API accepts it only while the access token has not expired. After 60 days the session cannot be renewed and the user has to sign in again.
 
-## Token Flow
+The API keeps one active session per user. A login or refresh elsewhere (for example in the Passgage app) invalidates the SDK's access token before its 60 days are over. The SDK then refreshes on the next 401. See [Authentication](./authentication.md#one-active-session-per-user).
 
-### Complete Authentication Flow
+## What is stored where
 
-```
-1. User Login
-   ↓
-2. Backend Returns Tokens
-   - Access Token (short-lived, ~1 hour)
-   - Refresh Token (long-lived, ~30 days)
-   ↓
-3. SDK Stores Tokens Securely
-   - iOS: Keychain Services
-   - Android: Keystore System
-   ↓
-4. SDK Injects Access Token into All Requests
-   Authorization: Bearer <access-token>
-   ↓
-5. Access Token Expires?
-   ├─ No → Continue using token
-   └─ Yes → Use Refresh Token
-              ↓
-          Get New Access Token
-              ↓
-          Store New Tokens
-              ↓
-          Retry Original Request
-```
+| Where | What | Notes |
+|-------|------|-------|
+| Memory | The tokens of the active session | Every refresh uses these, not the Keychain copy. Gone when the app process ends |
+| HTTP client | `Authorization: Bearer <access token>` header | Set on login, restore and refresh; removed on logout |
+| Keychain / Keystore, service `passgage_auth_tokens` | Access token, refresh token, and `savedAt` (time of writing, in ms) | Written on login and on every successful refresh |
+| Keychain / Keystore, service `passgage_user_info` | The `User` record | A cache: a session without it is still restored |
 
-### Login Flow
+Both Keychain records are written with `WHEN_UNLOCKED` accessibility: they can be read only while the device is unlocked.
 
-```typescript
-import {usePassgageAuth} from '@passgage/sdk-react-native';
+What gets written:
 
-function LoginScreen() {
-  const {login} = usePassgageAuth();
+| Sign-in | Written to the Keychain |
+|---------|-------------------------|
+| `login({login, password})` | Yes |
+| `login({login, password, rememberUser: false})` | No. A record of an earlier login is removed. Refreshed tokens are not written either |
+| `loginWithAzure(...)`, also through the `msalToken` prop | Yes |
 
-  const handleLogin = async () => {
-    // 1. Send credentials to backend
-    const result = await login({
-      username: 'user@example.com',
-      password: 'password123',
-    });
+The SDK does not export its storage functions. There is no public API to read the tokens, and you do not need one: every SDK service and hook uses the session automatically.
 
-    if (result.success) {
-      // 2. Tokens automatically stored
-      // 3. User object available via usePassgageAuth().user
-      // 4. All future API calls will include token
-      console.log('Logged in!', result.user);
-    }
-  };
+## Restore at startup
 
-  return <Button onPress={handleLogin} title="Login" />;
-}
-```
+Without `msalToken`, and with `rememberUser` left at `true`, the provider calls `restoreSession()` when it mounts:
 
-### What Happens Behind the Scenes
+1. Reads the tokens from the Keychain. If there are none, the result is `'none'`.
+2. Reads the stored user (may be missing), puts the access token on the HTTP client, and sets `authStatus` to `true`.
+3. If the session is older than 30 days, or has no `savedAt` (stored by an SDK version before 1.0.21), renews it first. See the next section.
+4. Sets `initialized` to `true` and loads the device lists in the background.
+5. Loads the current user from the API, and stores it.
 
-```typescript
-// When you call login():
+| Result of `restoreSession()` | Meaning | What the provider does |
+|------------------------------|---------|------------------------|
+| `'restored'` | A session is active | Nothing more |
+| `'none'` | No session: nothing stored, the stored session was refused at renewal, or the Keychain could not be read while the app was in the foreground | Calls `onUnauthorized` with `No active session. Login is required` |
+| `'unavailable'` | The Keychain could not be read while the app was in the background | Waits for the app to come to the foreground, then tries again. Does not call `onUnauthorized` |
 
-1. SDK sends credentials to /auth/login
-2. Backend validates and returns:
-   {
-     "accessToken": "eyJhbGciOiJIUzI1NiIs...",
-     "refreshToken": "eyJhbGciOiJIUzI1NiIs...",
-     "expiresAt": 1640000000,
-     "user": {...}
-   }
-3. SDK stores in secure storage:
-   await Keychain.setGenericPassword(
-     'passgage_auth',
-     JSON.stringify({accessToken, refreshToken, expiresAt})
-   );
-4. SDK configures API client:
-   axios.defaults.headers.common['Authorization'] = `Bearer ${accessToken}`;
-5. User object is cached in context
-```
+With `msalToken` set, the provider does not restore: it signs in with Azure instead. With `rememberUser={false}`, it logs out instead.
 
-## Automatic Token Injection
+## Renewal of older sessions
 
-Once logged in, **all SDK API calls automatically include your token**.
+An access token cannot be renewed after its 60 days. So when a stored session is restored and it was written more than 30 days ago, the SDK refreshes it before it reports `initialized`. Every refresh writes a new `savedAt`.
 
-### You Don't Need To:
+The result: a user who opens the app at least once every 60 days stays signed in. After 60 days without the app, the user signs in again.
 
-```typescript
-// ❌ You DON'T need to do this
-const token = await getToken();
-fetch(url, {
-  headers: {
-    'Authorization': `Bearer ${token}`
-  }
-});
+| Renewal outcome | Effect |
+|-----------------|--------|
+| Success | New tokens in memory, on the HTTP client and in the Keychain. Result `'restored'` |
+| Refused by the API | The session ends (`logout()`). Result `'none'`, and the provider calls `onUnauthorized` |
+| No answer (offline, timeout), HTTP 429, or 5xx | The stored session is kept. Result `'restored'`. The next 401 will try again |
 
-// ✅ SDK does it automatically
-const {scan} = usePassgageQRScanner();
-await scan(qrCode); // Token automatically included!
-```
+Renewal happens at restore, so it needs the provider to mount without `msalToken`. A refresh after a 401 also writes a new `savedAt`.
 
-### How It Works
+## 401, refresh, replay
 
-The SDK uses an Axios interceptor to add tokens:
+When an SDK request gets HTTP 401:
 
-```typescript
-// This happens automatically inside the SDK
-axios.interceptors.request.use(async (config) => {
-  const token = await getStoredToken();
+1. If the token on the HTTP client already changed while the request was running (another request refreshed it, or a login finished), the request is repeated with the current token. No refresh is made.
+2. Otherwise the SDK refreshes the session. Requests that get 401 while a refresh is running wait for that same refresh: one refresh call is made.
+3. If the refresh succeeds, each waiting request is repeated once with the new token.
+4. If the refresh fails, each waiting request fails with its original 401 (in scan results this is `UNAUTHORIZED`; see [Error Handling](./error-handling.md)).
 
-  if (token?.accessToken) {
-    config.headers['Authorization'] = `Bearer ${token.accessToken}`;
-  }
+Each request is repeated at most once. Requests to the endpoints that issue tokens (`users/sign_in`, `auth/azure`, `token`) never trigger a refresh.
 
-  return config;
-});
+Why a refresh fails decides what happens to the session:
+
+| Refresh outcome | Session |
+|-----------------|---------|
+| Refused by the API: HTTP 4xx other than 429, or an answer without tokens | Ended: `logout()` runs and the provider calls `onUnauthorized` with `Session expired. Login is required` (once) |
+| No answer (offline, timeout), HTTP 429, or 5xx | Kept. The next 401 tries again |
+| The user logged out or signed in again while the refresh was running | The refresh result is dropped |
+
+## When the session ends
+
+A session ends only in these cases:
+
+- You call `logout()`.
+- A refresh is refused by the API (after a 401, at the renewal on restore, or when you call `refreshToken()` yourself).
+- `login` or `loginWithAzure` is refused by the API while a session is active. See [Authentication](./authentication.md#a-failed-login-and-the-existing-session).
+- The provider mounts with `rememberUser={false}` (and no `msalToken`).
+- The app restarts after `login({..., rememberUser: false})`: that session was never stored.
+
+A network failure never ends the session.
+
+When the session ends, the SDK clears the session in memory, the `Authorization` header, the device lists and the Keychain records, and sets `authStatus` to `false`.
+
+## The iOS locked-device case
+
+The session is stored with `WHEN_UNLOCKED` accessibility. iOS refuses to read it while the device is locked, for example when the app is started in the background.
+
+Before 1.0.21 this was treated as "no session" and the user was sent to the login screen. Now:
+
+- `restoreSession()` resolves `'unavailable'` when the read fails and the app is not in the foreground. `error` is set to the storage error message.
+- The provider does not call `onUnauthorized`, and `initialized` stays `false`.
+- When the app comes to the foreground, the provider restores again.
+
+Keep showing your splash screen while `initialized` is `false`, and this case needs no code in your app.
+
+## Manual calls
+
+You normally do not call these. They are on `useAuthStore` for special cases.
+
+### `refreshToken()`
+
+```ts
+const ok = await useAuthStore.getState().refreshToken();
 ```
 
-### All These Requests Include Token Automatically
+Resolves `true` when a new access token was obtained and stored. Resolves `false` when:
 
-```typescript
-const {scan} = usePassgageQRScanner();
-await scan(qrCode); // ✅ Token included
+- there is no session in this run,
+- the API refused the refresh: the session is ended with `logout()`, but `onUnauthorized` is not called (watch `authStatus`),
+- the refresh failed on the network: the session is kept,
+- the user logged out or signed in again while it was running.
 
-const {checkInEntry} = usePassgageCheckIn();
-await checkInEntry({branchId, userId}); // ✅ Token included
+Calls made while a refresh is running share that refresh.
 
-const {logEntry} = usePassgageRemoteWork();
-await logEntry({userId}); // ✅ Token included
+### `restoreSession()` and `restoreAuth()`
 
-const {startScanning} = usePassgageNFCScanner();
-await startScanning(); // ✅ Token included
+```ts
+const result = await useAuthStore.getState().restoreSession();
+// 'restored' | 'none' | 'unavailable'
+
+const restored = await useAuthStore.getState().restoreAuth();
+// true when result is 'restored'
 ```
 
-## Automatic Token Refresh
-
-When an access token expires, the SDK automatically refreshes it.
-
-### The Process
-
-```
-1. API Request
-   ↓
-2. Backend Returns 401 Unauthorized
-   ↓
-3. SDK Detects Expired Token
-   ↓
-4. SDK Uses Refresh Token
-   ↓
-5. Backend Returns New Access Token
-   ↓
-6. SDK Stores New Tokens
-   ↓
-7. SDK Retries Original Request
-   ↓
-8. Request Succeeds
-```
-
-### You Don't See Any of This
-
-```typescript
-// Your code
-const {checkInEntry} = usePassgageCheckIn();
-await checkInEntry({branchId, userId});
-
-// Behind the scenes if token expired:
-// 1. Request fails with 401
-// 2. SDK automatically refreshes token
-// 3. Request is retried with new token
-// 4. checkInEntry() returns successfully
-```
-
-### Implementation
-
-The SDK uses a response interceptor:
-
-```typescript
-// This happens automatically inside the SDK
-axios.interceptors.response.use(
-  response => response,
-  async (error) => {
-    const originalRequest = error.config;
-
-    // If 401 and haven't retried yet
-    if (error.response?.status === 401 && !originalRequest._retry) {
-      originalRequest._retry = true;
-
-      try {
-        // Use refresh token to get new access token
-        const newToken = await refreshAccessToken();
-
-        // Update authorization header
-        originalRequest.headers['Authorization'] = `Bearer ${newToken}`;
-
-        // Retry original request
-        return axios(originalRequest);
-      } catch (refreshError) {
-        // Refresh failed, user needs to re-login
-        await logout();
-        return Promise.reject(refreshError);
-      }
-    }
-
-    return Promise.reject(error);
-  }
-);
-```
-
-### When Refresh Fails
-
-If the refresh token is also expired or invalid:
-
-1. User is automatically logged out
-2. Tokens are cleared
-3. App navigates to login screen (if configured)
-
-```typescript
-const {user, isLoading} = usePassgageAuth();
-
-// This pattern handles automatic logout
-if (isLoading) {
-  return <LoadingScreen />;
-}
-
-if (!user) {
-  return <LoginScreen />; // User logged out
-}
-
-return <AuthenticatedApp />;
-```
-
-## Token Storage
-
-### Secure Storage
-
-Tokens are stored using `react-native-keychain`:
-
-**iOS:**
-- Uses iOS Keychain Services
-- Hardware-encrypted (on devices with Secure Enclave)
-- Protected by device passcode/biometrics
-- Isolated from other apps
-
-**Android:**
-- Uses Android Keystore System
-- Hardware-backed security (when available)
-- Encrypted with device lock credentials
-- App-specific storage
-
-### What's Stored
-
-```typescript
-interface StoredToken {
-  accessToken: string;    // JWT access token
-  refreshToken: string;   // JWT refresh token
-  expiresAt: number;      // Unix timestamp
-}
-```
-
-### Storage Keys
-
-```typescript
-const KEYCHAIN_SERVICE = 'com.passgage.auth';
-const KEYCHAIN_USERNAME = 'passgage_user_tokens';
-```
-
-### Manual Token Access (Advanced)
-
-In rare cases where you need direct token access:
-
-```typescript
-import {getStoredToken, clearStoredToken} from '@passgage/sdk-react-native';
-
-// Get current token
-const token = await getStoredToken();
-console.log('Access token:', token?.accessToken);
-console.log('Expires at:', new Date(token?.expiresAt || 0));
-
-// Clear tokens (logout)
-await clearStoredToken();
-```
-
-## Security
-
-### Best Practices
-
-✅ **DO:**
-- Let SDK handle tokens automatically
-- Use HTTPS endpoints only
-- Keep refresh tokens secret
-- Clear tokens on logout
-- Use secure storage (provided by SDK)
-
-❌ **DON'T:**
-- Store tokens in AsyncStorage
-- Store tokens in app state/Redux
-- Log tokens to console in production
-- Share tokens between apps
-- Hardcode tokens
-
-### Token Security Features
-
-1. **Secure Storage:**
-   Hardware-backed encryption when available
-
-2. **HTTPS Only:**
-   Tokens only sent over encrypted connections
-
-3. **Automatic Expiration:**
-   Access tokens expire after short time
-
-4. **Refresh Token Rotation:**
-   Refresh tokens may rotate on each use
-
-5. **Token Scope:**
-   Tokens limited to specific permissions
-
-### Common Security Mistakes
-
-**❌ Storing in AsyncStorage:**
-```typescript
-// NEVER DO THIS
-await AsyncStorage.setItem('token', accessToken);
-```
-
-**❌ Exposing in Logs:**
-```typescript
-// NEVER DO THIS IN PRODUCTION
-console.log('Token:', accessToken);
-```
-
-**❌ Storing in Redux:**
-```typescript
-// AVOID THIS
-const initialState = {
-  token: '', // Don't store tokens in Redux
-};
-```
-
-**✅ Let SDK Handle It:**
-```typescript
-// DO THIS
-const {user} = usePassgageAuth();
-// Token is automatically managed securely
-```
-
-## Advanced Usage
-
-### Custom API Calls with Token
-
-If you need to make custom API calls:
-
-```typescript
-import axios from 'axios';
-import {getStoredToken} from '@passgage/sdk-react-native';
-
-const customApiCall = async () => {
-  const token = await getStoredToken();
-
-  const response = await axios.get(
-    'https://api.passgage.com/custom-endpoint',
-    {
-      headers: {
-        'Authorization': `Bearer ${token?.accessToken}`,
-      },
-    }
-  );
-
-  return response.data;
-};
-```
-
-### Token Expiration Handling
-
-Check if token is about to expire:
-
-```typescript
-const token = await getStoredToken();
-
-if (token) {
-  const now = Date.now();
-  const expiresIn = token.expiresAt - now;
-
-  if (expiresIn < 5 * 60 * 1000) {
-    console.log('Token expires in less than 5 minutes');
-    // Optionally pre-emptively refresh
-  }
-}
-```
-
-### Manual Token Refresh
-
-Force token refresh (rarely needed):
-
-```typescript
-import {refreshAccessToken} from '@passgage/sdk-react-native';
-
-try {
-  const newToken = await refreshAccessToken();
-  console.log('Token refreshed');
-} catch (error) {
-  console.error('Refresh failed:', error);
-  // User needs to re-login
-}
-```
-
-### Token Debugging
-
-Debug token issues:
-
-```typescript
-import {getStoredToken} from '@passgage/sdk-react-native';
-
-const debugToken = async () => {
-  const token = await getStoredToken();
-
-  if (!token) {
-    console.log('No token stored');
-    return;
-  }
-
-  console.log('Token info:');
-  console.log('- Has access token:', !!token.accessToken);
-  console.log('- Has refresh token:', !!token.refreshToken);
-  console.log('- Expires at:', new Date(token.expiresAt));
-  console.log('- Time until expiry:', Math.floor((token.expiresAt - Date.now()) / 1000 / 60), 'minutes');
-
-  // Decode JWT (for debugging only - don't use for security)
-  try {
-    const payload = JSON.parse(
-      atob(token.accessToken.split('.')[1])
-    );
-    console.log('- User ID:', payload.userId);
-    console.log('- Issued at:', new Date(payload.iat * 1000));
-  } catch (error) {
-    console.error('Failed to decode token:', error);
-  }
-};
-```
-
-### Token Persistence
-
-Tokens persist across:
-- ✅ App restarts
-- ✅ Device restarts
-- ✅ App updates
-- ❌ App uninstall (tokens are cleared)
-- ❌ Device reset (tokens are cleared)
-
-### Token Synchronization
-
-If your app supports multiple devices:
-
-```typescript
-// Tokens are device-specific
-// Each device has its own token pair
-// Backend should support multiple active sessions per user
-
-const {user} = usePassgageAuth();
-console.log('Logged in on this device');
-// Other devices may have different tokens for the same user
-```
-
-## Summary
-
-The Passgage SDK provides complete token management:
-
-1. **Automatic Storage:** Secure, encrypted storage
-2. **Automatic Injection:** Added to all API requests
-3. **Automatic Refresh:** Seamless token renewal
-4. **Automatic Retry:** Failed requests are retried
-5. **Persistent Sessions:** Survive app restarts
-6. **Security:** Hardware-backed encryption
-
-**You never need to handle tokens manually!**
-
-## Next Steps
-
-- [Authentication Guide](./authentication.md) - Complete authentication flow
-- [Security Best Practices](./security.md) - Security guidelines
-- [Error Handling](./error-handling.md) - Handle auth errors
-- [FAQ](./faq.md) - Common token questions
+The provider calls `restoreSession()` at startup and handles `'unavailable'` for you. Call it yourself only if you need to restore outside the provider's startup. `restoreAuth()` is the same call, resolving a boolean.

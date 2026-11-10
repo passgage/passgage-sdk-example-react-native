@@ -1,17 +1,27 @@
-# Getting Started with Passgage SDK
+# Getting Started
 
-This guide will walk you through integrating the Passgage SDK into your React Native application.
+This page takes you from an empty React Native app to a signed-in user, with `@passgage/sdk-react-native` 1.0.21.
 
-## Prerequisites
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Native setup](#native-setup)
+- [Provider setup](#provider-setup)
+- [A minimal app](#a-minimal-app)
+- [What happens at startup](#what-happens-at-startup)
+- [Next steps](#next-steps)
 
-- React Native 0.70 or higher
-- iOS 13.0+ / Android 6.0+
-- Node.js 16+ and npm/yarn
-- Basic knowledge of React Native and TypeScript
+## Requirements
+
+From the package's `peerDependencies`:
+
+| Package | Version |
+|---------|---------|
+| `react` | >=18.0.0 |
+| `react-native` | >=0.70.0 |
+
+You also need the URL of your Passgage API (`baseURL`), and users who sign in either with Azure AD or with email/phone and password.
 
 ## Installation
-
-### Step 1: Install the SDK
 
 ```bash
 npm install @passgage/sdk-react-native
@@ -19,415 +29,222 @@ npm install @passgage/sdk-react-native
 yarn add @passgage/sdk-react-native
 ```
 
-### Step 2: Install Required Peer Dependencies
+### Peer dependencies
+
+The SDK imports four native modules. Install them in your app: React Native only links native modules that are direct dependencies of the app.
 
 ```bash
-npm install @react-native-community/geolocation react-native-keychain
+npm install react-native-geolocation-service react-native-permissions react-native-keychain react-native-nfc-manager
 ```
 
-### Step 3: Install Optional Dependencies (Based on Features)
+| Package | Version | Used for |
+|---------|---------|----------|
+| `react-native-geolocation-service` | ^5.3.1 | Reading the location for the range check |
+| `react-native-permissions` | ^5.4.4 | Checking and requesting the location permission |
+| `react-native-keychain` | >=8.0.0 | Storing the session (Keychain / Keystore) |
+| `react-native-nfc-manager` | ^3.14.0 | Reading NFC tags |
 
-If you're using NFC scanning:
+Install all four, also if you do not use NFC: the SDK imports each of them.
+
+The SDK does not read QR codes from the camera. Use the scanner of your choice (for example `react-native-vision-camera`) and pass the code it reads to `scan`. See [QR Scanner](./features/qr-scanner.md).
+
+On iOS, install the pods afterwards:
+
 ```bash
-npm install react-native-nfc-manager
+cd ios && pod install
 ```
 
-If you're using QR scanning with camera:
-```bash
-npm install react-native-vision-camera
+## Native setup
+
+Follow the native setup of each library. The SDK needs the parts below.
+
+### Location permission
+
+The provider checks the location permission when it mounts, and asks for it if the user has not been asked yet:
+
+| Platform | Permission the SDK asks for |
+|----------|-----------------------------|
+| Android | `ACCESS_FINE_LOCATION` |
+| iOS | `LOCATION_WHEN_IN_USE` |
+
+**iOS.** `react-native-permissions` only includes the permission handlers you list in the `Podfile`. Without `LocationWhenInUse` the permission is reported as unavailable and the user is never asked:
+
+```ruby
+# ios/Podfile
+node_require('react-native-permissions/scripts/setup.rb')
+
+setup_permissions([
+  'LocationWhenInUse',
+])
 ```
 
-### Step 4: Platform-Specific Setup
+Add the usage text to `Info.plist`:
 
-#### iOS Setup
-
-1. Install CocoaPods dependencies:
-```bash
-cd ios && pod install && cd ..
-```
-
-2. Add location permissions to `ios/YourApp/Info.plist`:
 ```xml
 <key>NSLocationWhenInUseUsageDescription</key>
-<string>We need your location to find nearby branches for check-in</string>
-<key>NSLocationAlwaysUsageDescription</key>
-<string>We need your location to find nearby branches</string>
+<string>Your location is used to check that you are near the door.</string>
 ```
 
-3. If using NFC, add NFC capability:
-```xml
-<key>NFCReaderUsageDescription</key>
-<string>We need NFC access to scan employee cards</string>
-```
+Run `pod install` again after changing the `Podfile`.
 
-4. If using camera for QR codes:
-```xml
-<key>NSCameraUsageDescription</key>
-<string>We need camera access to scan QR codes</string>
-```
+**Android.** Add the permission to `android/app/src/main/AndroidManifest.xml`:
 
-#### Android Setup
-
-1. Add permissions to `android/app/src/main/AndroidManifest.xml`:
 ```xml
-<uses-permission android:name="android.permission.INTERNET" />
 <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 ```
 
-2. If using NFC:
-```xml
-<uses-permission android:name="android.permission.NFC" />
-<uses-feature android:name="android.hardware.nfc" android:required="false" />
-```
+### Secure storage
 
-3. If using camera:
-```xml
-<uses-permission android:name="android.permission.CAMERA" />
-```
+`react-native-keychain` needs no extra configuration for the SDK. The session is written with `WHEN_UNLOCKED` accessibility, so it can only be read while the device is unlocked. See [Token Management](./token-management.md#the-ios-locked-device-case).
 
-## Quick Start
+### NFC
 
-### Step 1: Wrap Your App with PassgageAccessProvider
+Follow the setup of [react-native-nfc-manager](https://github.com/revtel/react-native-nfc-manager) (on iOS the NFC capability and `NFCReaderUsageDescription`, on Android the `NFC` permission). The SDK does not start the NFC manager: your app calls `NfcManager.start()`. See [NFC Scanner](./features/nfc-scanner.md).
 
-The provider must wrap your entire application to provide authentication context.
+## Provider setup
 
-```typescript
-// App.tsx
-import React from 'react';
+Wrap your app in `PassgageAccessProvider`. The provider creates the HTTP client that every SDK request uses, so mount it before any screen that uses the SDK.
+
+```tsx
 import {PassgageAccessProvider} from '@passgage/sdk-react-native';
-import {NavigationContainer} from '@react-navigation/native';
-import {MainNavigator} from './navigation';
 
 export default function App() {
   return (
     <PassgageAccessProvider
-      apiUrl="https://api.passgage.com"  // Your API URL
-      apiKey="your-api-key-here"          // Your API key
-    >
-      <NavigationContainer>
-        <MainNavigator />
-      </NavigationContainer>
+      baseURL="https://your-api.passgage.com"
+      onUnauthorized={error => {
+        // There is no session: show your login screen
+        console.log('Unauthorized:', error.message);
+      }}
+      getLocationErrorCallback={error => {
+        console.log('Location error:', error);
+      }}
+      locationPermissionErrorCallback={error => {
+        console.log('Permission check failed:', error);
+      }}>
+      <Root />
     </PassgageAccessProvider>
   );
 }
 ```
 
-### Step 2: Create a Login Screen
+### Provider props
 
-```typescript
-// screens/LoginScreen.tsx
-import React, {useState} from 'react';
+| Prop | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| `baseURL` | `string` | Yes | - | Base URL of your Passgage API. Requests go to `${baseURL}/api/${apiVersion}` |
+| `msalToken` | `string` | No | - | Azure AD `id_token`. Read once, when the provider mounts; a value passed later is ignored. Omit it for email/phone + password sign-in, or when you call `loginWithAzure` yourself |
+| `apiVersion` | `string` | No | `'v2'` | API version in the request path |
+| `timeout` | `number` | No | `30000` | Request timeout in milliseconds |
+| `rememberUser` | `boolean` | No | `true` | Only used without `msalToken`. `true` restores the stored session at startup. `false` signs out at every startup |
+| `onUnauthorized` | `(error: Error) => void` | No | - | Called when there is no session: no stored session at startup, the provider's Azure login failed, or a session ended because it could not be refreshed. See [Authentication](./authentication.md#when-onunauthorized-is-called) |
+| `getLocationErrorCallback` | `(error: any) => void` | No | - | Called when the location cannot be read. A missing permission arrives here too (`error.code === 1`) |
+| `locationPermissionErrorCallback` | `(error: any) => void` | No | - | Called when the state of the location permission cannot be checked |
+| `children` | `ReactNode` | Yes | - | Your app |
+
+The provider reads its props once, when it mounts. Changing `baseURL`, `msalToken`, `apiVersion`, `timeout` or `rememberUser` afterwards has no effect. `onUnauthorized` is the exception: the provider always calls the latest one you passed.
+
+## A minimal app
+
+`useAuthStore` is a zustand hook. Two of its fields decide what to render:
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `initialized` | `boolean` | `false` until it is known whether there is a session. Show a splash screen while it is `false` |
+| `authStatus` | `boolean` | `true` while a user is signed in |
+
+Check `initialized` first. During startup `authStatus` is `false` while the stored session is being read, and it can already be `true` while the SDK is still renewing that session. Do not gate on `loading` either: it is also `true` during every login and logout, so your navigator would unmount on each attempt.
+
+```tsx
+import React from 'react';
+import {ActivityIndicator, Button, Text, View} from 'react-native';
 import {
-  View,
-  TextInput,
-  Button,
-  Text,
-  ActivityIndicator,
-  Alert,
-  StyleSheet,
-} from 'react-native';
-import {usePassgageAuth} from '@passgage/sdk-react-native';
+  PassgageAccessProvider,
+  useAuthStore,
+} from '@passgage/sdk-react-native';
 
-export default function LoginScreen() {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-
-  const {login, isLoading, error} = usePassgageAuth({
-    onLoginSuccess: (user) => {
-      Alert.alert('Success', `Welcome ${user.fullName}!`);
-      // Navigation will automatically happen when authenticated
-    },
-    onLoginError: (error) => {
-      Alert.alert('Login Failed', error.message);
-    },
-  });
-
-  const handleLogin = async () => {
-    if (!username || !password) {
-      Alert.alert('Error', 'Please enter username and password');
-      return;
-    }
-
-    await login({username, password});
-  };
-
+function Splash() {
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Passgage Login</Text>
-
-      <TextInput
-        style={styles.input}
-        placeholder="Username or Email"
-        value={username}
-        onChangeText={setUsername}
-        autoCapitalize="none"
-        editable={!isLoading}
-      />
-
-      <TextInput
-        style={styles.input}
-        placeholder="Password"
-        value={password}
-        onChangeText={setPassword}
-        secureTextEntry
-        editable={!isLoading}
-      />
-
-      {error && <Text style={styles.error}>{error.message}</Text>}
-
-      <Button
-        title={isLoading ? 'Logging in...' : 'Login'}
-        onPress={handleLogin}
-        disabled={isLoading}
-      />
-
-      {isLoading && <ActivityIndicator style={styles.loader} />}
+    <View style={{flex: 1, alignItems: 'center', justifyContent: 'center'}}>
+      <ActivityIndicator size="large" />
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    padding: 20,
-    justifyContent: 'center',
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 30,
-    textAlign: 'center',
-  },
-  input: {
-    height: 50,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    paddingHorizontal: 15,
-    marginBottom: 15,
-    fontSize: 16,
-  },
-  error: {
-    color: 'red',
-    marginBottom: 15,
-    textAlign: 'center',
-  },
-  loader: {
-    marginTop: 20,
-  },
-});
-```
+function LoginScreen() {
+  const {login, loading, error} = useAuthStore();
 
-### Step 3: Create Navigation Based on Auth State
+  return (
+    <View style={{flex: 1, justifyContent: 'center', padding: 24}}>
+      {error ? <Text style={{color: 'red'}}>{error}</Text> : null}
+      <Button
+        title={loading ? 'Signing in...' : 'Sign in'}
+        disabled={loading}
+        onPress={() =>
+          login({login: 'user@example.com', password: 'password'})
+        }
+      />
+    </View>
+  );
+}
 
-```typescript
-// navigation/MainNavigator.tsx
-import React from 'react';
-import {createNativeStackNavigator} from '@react-navigation/native-stack';
-import {usePassgageAuth} from '@passgage/sdk-react-native';
-import LoginScreen from '../screens/LoginScreen';
-import HomeScreen from '../screens/HomeScreen';
-import QRScannerScreen from '../screens/QRScannerScreen';
+function HomeScreen() {
+  const {user, logout} = useAuthStore();
 
-const Stack = createNativeStackNavigator();
+  return (
+    <View style={{flex: 1, justifyContent: 'center', padding: 24}}>
+      <Text>Signed in as {user?.fullName ?? 'unknown user'}</Text>
+      <Button title="Sign out" onPress={() => logout()} />
+    </View>
+  );
+}
 
-export function MainNavigator() {
-  const {user, isLoading} = usePassgageAuth();
+function Root() {
+  const {initialized, authStatus} = useAuthStore();
 
-  // Show loading screen while checking authentication
-  if (isLoading) {
-    return <LoadingScreen />;
+  if (!initialized) {
+    return <Splash />;
   }
+  return authStatus ? <HomeScreen /> : <LoginScreen />;
+}
 
+export default function App() {
   return (
-    <Stack.Navigator>
-      {!user ? (
-        // User is not authenticated
-        <Stack.Screen
-          name="Login"
-          component={LoginScreen}
-          options={{headerShown: false}}
-        />
-      ) : (
-        // User is authenticated
-        <>
-          <Stack.Screen
-            name="Home"
-            component={HomeScreen}
-            options={{title: 'Home'}}
-          />
-          <Stack.Screen
-            name="QRScanner"
-            component={QRScannerScreen}
-            options={{title: 'QR Scanner'}}
-          />
-          {/* Add more authenticated screens */}
-        </>
-      )}
-    </Stack.Navigator>
+    <PassgageAccessProvider baseURL="https://your-api.passgage.com">
+      <Root />
+    </PassgageAccessProvider>
   );
 }
 ```
 
-### Step 4: Use SDK Features
+`user` can be `null` while `authStatus` is `true` (for example when the user record could not be loaded), so read it with `?.`.
 
-Now you can use any SDK feature in your authenticated screens:
+A full login screen for each sign-in method is in [Authentication](./authentication.md).
 
-```typescript
-// screens/HomeScreen.tsx
-import React from 'react';
-import {View, Text, Button} from 'react-native';
-import {usePassgageAuth} from '@passgage/sdk-react-native';
+## What happens at startup
 
-export default function HomeScreen({navigation}) {
-  const {user, logout} = usePassgageAuth();
+The provider does this once, in a mount effect:
 
-  return (
-    <View style={{flex: 1, padding: 20}}>
-      <Text>Welcome, {user?.fullName}!</Text>
-      <Text>Email: {user?.email}</Text>
+1. **Location permission.** Checks `ACCESS_FINE_LOCATION` (Android) or `LOCATION_WHEN_IN_USE` (iOS). If the user has not been asked yet, it asks. Then it reads the location once (a single reading, not continuous tracking). If the permission check itself fails, `locationPermissionErrorCallback` is called. If the location cannot be read, `getLocationErrorCallback` is called.
+2. **HTTP client.** Creates the client for `${baseURL}/api/${apiVersion}` with `timeout`, and connects its 401 handling to the session refresh.
+3. **Session.** One of three paths:
 
-      {user?.company && (
-        <Text>Company: {user.company.name}</Text>
-      )}
+| Situation | What the provider does |
+|-----------|------------------------|
+| `msalToken` is set | Signs in with Azure (`loginWithAzure`) and does not restore the stored session. If the login fails, calls `onUnauthorized` with the message `Azure login failed: <reason>`. `initialized` becomes `true` when the login has finished |
+| No `msalToken`, `rememberUser` is `true` (default) | Restores the session stored in the Keychain. A session older than 30 days is renewed first. If there is no session, calls `onUnauthorized` with the message `No active session. Login is required` |
+| No `msalToken`, `rememberUser` is `false` | Calls `logout()` and then `onUnauthorized` with `No active session. Login is required` |
 
-      <Button
-        title="Scan QR Code"
-        onPress={() => navigation.navigate('QRScanner')}
-      />
+Why the Azure path does not restore: the API keeps one active session per user. The Azure login creates a new session and invalidates the stored one, so the provider does not send requests with the old token. See [Authentication](./authentication.md#one-active-session-per-user).
 
-      <Button
-        title="Check In"
-        onPress={() => navigation.navigate('CheckIn')}
-      />
+After a successful login or restore, the SDK loads the devices the user may use and the list of codes the user may read. The QR and NFC hooks need these lists.
 
-      <Button
-        title="Logout"
-        onPress={logout}
-      />
-    </View>
-  );
-}
-```
+If iOS refuses to read the Keychain because the device is locked (the app was started in the background), the restore result is `'unavailable'`. The provider then waits until the app comes to the foreground and tries again. `initialized` stays `false` until then. See [Token Management](./token-management.md#the-ios-locked-device-case).
 
-## Project Structure
+## Next steps
 
-Here's a recommended project structure when using the SDK:
-
-```
-your-app/
-├── src/
-│   ├── screens/
-│   │   ├── LoginScreen.tsx
-│   │   ├── HomeScreen.tsx
-│   │   ├── QRScannerScreen.tsx
-│   │   ├── NFCScannerScreen.tsx
-│   │   ├── CheckInScreen.tsx
-│   │   └── RemoteWorkScreen.tsx
-│   ├── navigation/
-│   │   └── MainNavigator.tsx
-│   ├── components/
-│   │   ├── LoadingScreen.tsx
-│   │   └── ErrorBoundary.tsx
-│   └── types/
-│       └── navigation.ts
-├── App.tsx
-└── package.json
-```
-
-## Configuration Options
-
-The `PassgageAccessProvider` accepts the following props:
-
-```typescript
-interface PassgageAccessProviderProps {
-  // Required
-  apiUrl: string;        // Your Passgage API URL
-  apiKey: string;        // Your API key
-
-  // Optional
-  children: ReactNode;   // Your app components
-  timeout?: number;      // API request timeout (default: 30000ms)
-  debug?: boolean;       // Enable debug logging (default: false)
-}
-```
-
-Example with all options:
-```typescript
-<PassgageAccessProvider
-  apiUrl="https://api.passgage.com"
-  apiKey="your-api-key-here"
-  timeout={60000}  // 60 seconds
-  debug={__DEV__}  // Enable in development
->
-  <App />
-</PassgageAccessProvider>
-```
-
-## Environment Variables
-
-For better security, use environment variables:
-
-1. Install react-native-config:
-```bash
-npm install react-native-config
-```
-
-2. Create `.env` file:
-```env
-PASSGAGE_API_URL=https://api.passgage.com
-PASSGAGE_API_KEY=your-api-key-here
-```
-
-3. Use in your app:
-```typescript
-import Config from 'react-native-config';
-
-<PassgageAccessProvider
-  apiUrl={Config.PASSGAGE_API_URL}
-  apiKey={Config.PASSGAGE_API_KEY}
->
-  <App />
-</PassgageAccessProvider>
-```
-
-## Next Steps
-
-Now that you have the basic setup complete, explore the SDK features:
-
-- [Authentication Flow](./authentication.md) - Understand how authentication works
-- [QR Scanner](./features/qr-scanner.md) - Implement QR code scanning
-- [NFC Scanner](./features/nfc-scanner.md) - Implement NFC card scanning
-- [Check-In](./features/check-in.md) - Implement location-based check-in
-- [Remote Work](./features/remote-work.md) - Implement remote work tracking
-- [Token Management](./token-management.md) - Learn about automatic token handling
-- [Error Handling](./error-handling.md) - Handle errors gracefully
-
-## Example Application
-
-Check out the complete example application at:
-```
-examples/passgage-sdk-example-react-native
-```
-
-This example demonstrates all SDK features with production-ready code.
-
-## Troubleshooting
-
-If you encounter issues during setup, check the [Troubleshooting Guide](./troubleshooting.md) or see common issues below:
-
-### Common Setup Issues
-
-**Issue**: "Unable to resolve module @passgage/sdk-react-native"
-- **Solution**: Run `npm install` or `yarn install` again
-- Clear Metro cache: `npx react-native start --reset-cache`
-
-**Issue**: Location permissions not working
-- **Solution**: Check that permissions are added to Info.plist (iOS) and AndroidManifest.xml (Android)
-- Request permissions at runtime using react-native-permissions
-
-**Issue**: "Invariant Violation: "PassgageAccessProvider" is not configured"
-- **Solution**: Make sure `PassgageAccessProvider` wraps your entire app component tree
-
-For more issues and solutions, see the [FAQ](./faq.md).
+- [Authentication](./authentication.md): Azure AD and email/phone sign-in, logout, `onUnauthorized`
+- [Token Management](./token-management.md): how the session is stored, renewed and ended
+- [QR Scanner](./features/qr-scanner.md) and [NFC Scanner](./features/nfc-scanner.md)
+- [Error Handling](./error-handling.md)
+- [Troubleshooting](./troubleshooting.md) and [FAQ](./faq.md)

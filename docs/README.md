@@ -1,160 +1,57 @@
 # Passgage SDK Documentation
 
-Welcome to the comprehensive developer documentation for the Passgage SDK. This documentation provides everything you need to integrate Passgage's access control and time tracking features into your React Native applications.
+Developer documentation for `@passgage/sdk-react-native` 1.0.21, the Passgage Access SDK for React Native. The example app in this repository uses it.
 
-## Table of Contents
+The package README on npm is the short reference: [@passgage/sdk-react-native](https://www.npmjs.com/package/@passgage/sdk-react-native). These pages go into more detail.
 
-### Getting Started
-- [Installation & Setup](./getting-started.md)
-- [Quick Start Guide](./getting-started.md#quick-start)
-- [Project Structure](./getting-started.md#project-structure)
+## What the SDK does
 
-### Core Concepts
-- [Authentication Flow](./authentication.md)
-- [Token Management](./token-management.md)
-- [Error Handling](./error-handling.md)
+- **Sign-in.** Signs the user in to the Passgage API, with an Azure AD `id_token` or with email/phone and password. It stores the session in the device Keychain/Keystore, restores it at the next start, and renews it.
+- **QR entrance.** Takes a code that your app read (the SDK does not open the camera) and records an entrance for the matching Passgage device. For an IoT device it opens the door first.
+- **NFC entrance.** Reads an NFC tag and runs the same flow.
+- **Checks before an entrance.** The code must belong to a device the user may use, the same code is refused for 30 seconds after a successful read, and when the device requires it, the user must be within the device's range (checked on the phone with a location read at scan time).
+
+## Pages
+
+### Start here
+
+- [Getting Started](./getting-started.md): installation, native setup, the provider and its props, a minimal app, and what happens at startup
+
+### Sign-in and session
+
+- [Authentication](./authentication.md): Azure AD and email/phone sign-in with full login screens, `onUnauthorized`, logout, failed logins, and the one-session-per-user rule
+- [Token Management](./token-management.md): what is stored where, the 60-day token, renewal, 401 handling, and when the session ends
 
 ### Features
-- [QR Code Scanner](./features/qr-scanner.md)
-- [NFC Card Scanner](./features/nfc-scanner.md)
-- [Location-Based Check-In](./features/check-in.md)
-- [Remote Work Logging](./features/remote-work.md)
 
-### Advanced Topics
-- [API Reference](./api-reference.md)
-- [Best Practices](./best-practices.md)
-- [Performance Optimization](./performance.md)
-- [Security Guidelines](./security.md)
+- [QR Scanner](./features/qr-scanner.md): `usePassgageQRScanner`
+- [NFC Scanner](./features/nfc-scanner.md): `usePassgageNFCScanner`
 
-### Help & Support
+### Reference and help
+
+- [Error Handling](./error-handling.md): error codes and how to handle them
 - [FAQ](./faq.md)
 - [Troubleshooting](./troubleshooting.md)
-- [Migration Guides](./migration-guides.md)
-- [Examples](./examples.md)
 
-## Overview
+## Public API at a glance
 
-The Passgage SDK (@passgage/sdk-react-native) is a comprehensive React Native library that provides:
+| Export | Kind | Purpose |
+|--------|------|---------|
+| `PassgageAccessProvider` | Component | Configures the SDK and starts the session |
+| `useAuthStore` | Zustand hook | Sign-in state and `login`, `loginWithAzure`, `logout` |
+| `usePassgageQRScanner` | Hook | Validates a QR code and records the entrance |
+| `usePassgageNFCScanner` | Hook | Reads an NFC tag and records the entrance |
+| `useLocation` | Hook | Reads the location for your own screens (not used by the range check) |
+| `qrScannerStore` | Zustand store | The devices and codes the user may use |
+| `locationStore` | Zustand store | The location used by the range check |
+| `AuthService`, `DeviceAccessService`, `QRAccessService`, `NfcAccessService` | Objects | Low-level calls that use the provider's session |
 
-- **JWT-based Authentication**: Secure login with automatic token management
-- **QR Code Access Control**: Validate QR codes for access entry/exit
-- **NFC Card Scanning**: Read and validate NFC cards for access control
-- **Location-Based Check-In**: Check in/out from nearby company branches
-- **Remote Work Tracking**: Log remote work entries and exits
+## Requirements
 
-### Key Features
-
-- ✅ **Automatic Token Management**: JWT tokens are automatically stored, injected, and refreshed
-- ✅ **Secure Storage**: Credentials stored using react-native-keychain
-- ✅ **Type-Safe**: Full TypeScript support with comprehensive type definitions
-- ✅ **React Hooks API**: Easy-to-use custom hooks for all features
-- ✅ **Error Handling**: Comprehensive error handling with user-friendly messages
-- ✅ **Location Services**: Automatic location detection and management
-- ✅ **Production Ready**: Battle-tested in enterprise environments
-
-## Quick Links
-
-- [NPM Package](https://www.npmjs.com/package/@passgage/sdk-react-native)
-- [Example Application](../examples/passgage-sdk-example-react-native)
-- [GitHub Repository](https://github.com/passgage)
-
-## Installation
-
-```bash
-npm install @passgage/sdk-react-native
-# or
-yarn add @passgage/sdk-react-native
-```
-
-### Peer Dependencies
-
-```bash
-npm install @react-native-community/geolocation react-native-keychain
-# Optional (based on features you use)
-npm install react-native-nfc-manager react-native-vision-camera
-```
-
-## Minimal Setup
-
-```typescript
-import {PassgageAccessProvider} from '@passgage/sdk-react-native';
-
-function App() {
-  return (
-    <PassgageAccessProvider
-      apiUrl="https://your-api.passgage.com"
-      apiKey="your-api-key"
-    >
-      <YourApp />
-    </PassgageAccessProvider>
-  );
-}
-```
-
-## Basic Usage
-
-```typescript
-import {usePassgageAuth} from '@passgage/sdk-react-native';
-
-function LoginScreen() {
-  const {login, isLoading, user} = usePassgageAuth({
-    onLoginSuccess: (user) => {
-      console.log('Welcome:', user.fullName);
-    }
-  });
-
-  const handleLogin = async () => {
-    await login({
-      username: 'user@example.com',
-      password: 'password',
-    });
-  };
-
-  return (
-    <Button
-      onPress={handleLogin}
-      disabled={isLoading}
-      title="Login"
-    />
-  );
-}
-```
-
-## Architecture
-
-The SDK follows a modular architecture with clear separation of concerns:
-
-```
-@passgage/sdk-react-native
-├── Provider (PassgageAccessProvider)
-├── Authentication (usePassgageAuth)
-├── QR Scanner (usePassgageQRScanner)
-├── NFC Scanner (usePassgageNFCScanner)
-├── Check-In (usePassgageCheckIn)
-├── Remote Work (usePassgageRemoteWork)
-└── Location Services (useLocation)
-```
-
-Each module is accessible via React hooks that provide:
-- State management
-- API integration
-- Error handling
-- Loading states
-- Callback support
+- React Native >=0.70 and React >=18
+- Peer dependencies: `react-native-geolocation-service`, `react-native-permissions`, `react-native-keychain`, `react-native-nfc-manager` (see [Getting Started](./getting-started.md#peer-dependencies))
+- A Passgage API base URL
 
 ## Support
 
-For questions, issues, or feature requests:
-
-- Check the [FAQ](./faq.md)
-- Review [Troubleshooting Guide](./troubleshooting.md)
-- Open an issue on GitHub
-- Contact support@passgage.com
-
-## License
-
-Proprietary - © 2025 Passgage
-
----
-
-**Next Steps**: Start with the [Getting Started Guide](./getting-started.md) to integrate the SDK into your application.
+For support, contact devops@passgage.com.

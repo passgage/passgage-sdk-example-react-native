@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
-  TouchableOpacity,
   StyleSheet,
   Vibration,
   Alert,
@@ -21,7 +20,6 @@ export const QRScannerCameraScreen = () => {
   const devices = useCameraDevices();
   const cameraActiveRef = useRef(true);
   const [cameraActive, setCameraActive] = useState(true);
-  const [lastScanResult, setLastScanResult] = useState<string | null>(null);
 
   const [selectedCamera, setSelectedCamera] = useState<'front' | 'back'>(
     'back',
@@ -33,26 +31,34 @@ export const QRScannerCameraScreen = () => {
     devices?.find(item => item.position === 'back') ?? frontDevice;
   const device = selectedCamera === 'back' ? backDevice : frontDevice;
 
-  const { scan, isLoading } = usePassgageQRScanner({
-    skipLocationCheck: false,
-    skipRepetitiveCheck: false,
+  // Turn the camera back on so the user can scan again
+  const resumeCamera = () => {
+    cameraActiveRef.current = true;
+    setCameraActive(true);
+  };
+
+  const { scan } = usePassgageQRScanner({
+    options: { skipLocationCheck: false, skipRepetitiveCheck: false },
     onSuccess: entrance => {
       const message = `Access granted!\nEntrance ID: ${entrance?.id || 'N/A'}`;
-      setLastScanResult(message);
-      setCameraActive(false);
       Alert.alert('Success', message);
     },
     onError: error => {
-      const errorMessage = error.message || 'QR validation failed';
-      setLastScanResult(`Error: ${errorMessage}`);
-      Alert.alert('Failed', errorMessage);
+      const errorMessage = error?.message || 'QR validation failed';
+      const code = error?.error?.code;
+      Alert.alert('Failed', code ? `${errorMessage}\n(${code})` : errorMessage, [
+        { text: 'Scan again', onPress: resumeCamera },
+      ]);
     },
   });
 
-  const onRead = async (qrCode: string) => {
+  // The camera reports the code on every frame: take the first one, stop
+  // the camera, and let the result decide whether to scan again. (The SDK
+  // also ignores scan calls made while one is running.)
+  const onRead = (qrCode: string) => {
     Vibration.vibrate(200);
-    scan(qrCode);
     setCameraActive(false);
+    scan(qrCode);
   };
 
   const codeScanner = useCodeScanner({
@@ -76,8 +82,12 @@ export const QRScannerCameraScreen = () => {
     })();
   }, []);
 
+  if (permission === 'denied') {
+    return <Text>Camera permission is required to scan QR codes</Text>;
+  }
+
   if (device == null) {
-    return <Text>Kamera bulunamadı</Text>;
+    return <Text>No camera found</Text>;
   }
 
   return (

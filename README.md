@@ -1,97 +1,52 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# Passgage SDK Example App
 
-# Getting Started
+A React Native app that shows how to integrate [`@passgage/sdk-react-native`](https://www.npmjs.com/package/@passgage/sdk-react-native): sign-in, and QR / NFC entrance check-in with range validation.
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+| Screen | What it shows | File |
+|--------|---------------|------|
+| Login | Email/phone + password with `login`, and Azure AD with `loginWithAzure` | `src/screens/LoginScreen.tsx` |
+| Home | The signed-in user, logout | `src/screens/HomeScreen.tsx` |
+| QR Scanner | Validating a QR code typed in by hand | `src/screens/QRScannerScreen.tsx` |
+| QR Scanner Camera | Validating codes from the camera (react-native-vision-camera) | `src/screens/QRScannerCameraScreen.tsx` |
+| NFC Scanner | Reading an NFC card | `src/screens/NFCScannerScreen.tsx` |
 
-## Step 1: Start Metro
+`App.tsx` mounts `PassgageAccessProvider` and switches between the login screen and the app screens on `authStatus`, once the stored session has been looked up (`initialized`).
 
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
+## Documentation
 
-To start the Metro dev server, run the following command from the root of your React Native project:
+- [Getting started](./docs/getting-started.md)
+- [Authentication](./docs/authentication.md) and [session and tokens](./docs/token-management.md)
+- [QR scanner](./docs/features/qr-scanner.md) and [NFC scanner](./docs/features/nfc-scanner.md)
+- [Error handling](./docs/error-handling.md)
+- [FAQ](./docs/faq.md) and [troubleshooting](./docs/troubleshooting.md)
 
-```sh
-# Using npm
-npm start
+The package README is the reference for the API: <https://www.npmjs.com/package/@passgage/sdk-react-native>.
 
-# OR using Yarn
-yarn start
-```
+## Running the app
 
-## Step 2: Build and run your app
-
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
-
-### Android
-
-```sh
-# Using npm
-npm run android
-
-# OR using Yarn
-yarn android
-```
-
-### iOS
-
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
-
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
+Requirements: the [React Native environment](https://reactnative.dev/docs/set-up-your-environment), a Passgage account, and a real device for NFC and location.
 
 ```sh
-bundle install
-```
+npm install
+cd ios && bundle install && bundle exec pod install && cd ..
 
-Then, and every time you update your native dependencies, run:
-
-```sh
-bundle exec pod install
-```
-
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
-
-```sh
-# Using npm
 npm run ios
-
-# OR using Yarn
-yarn ios
+# or
+npm run android
 ```
 
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
+### Configuration
 
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
+- **API URL:** `API_BASE_URL` in `App.tsx`.
+- **Email/phone + password:** works with any Passgage user of that environment.
+- **Azure AD:** `LoginScreen.tsx` signs in with `react-native-app-auth`. Replace the tenant id, client id and redirect URLs with the values of your Azure app registration; Passgage must have the same tenant and client id configured for your company. You can also pass the `id_token` to the provider as `msalToken` instead.
 
-## Step 3: Modify your app
+### Native setup this app already has
 
-Now that you have successfully run the app, let's make changes!
+- iOS `Podfile`: `setup_permissions([... 'LocationWhenInUse', 'Camera' ...])`. Without it the location permission is never asked.
+- iOS `Info.plist`: `NSLocationWhenInUseUsageDescription`, `NFCReaderUsageDescription`; NFC reader entitlement.
+- Android manifest: `ACCESS_FINE_LOCATION`, `NFC`.
 
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
+### Debugging
 
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
-
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
-
-## Congratulations! :tada:
-
-You've successfully run and modified your React Native App. :partying_face:
-
-### Now what?
-
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
-
-# Troubleshooting
-
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
-
-# Learn More
-
-To learn more about React Native, take a look at the following resources:
-
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+Shake the device to open the network logger and see the SDK's requests.
