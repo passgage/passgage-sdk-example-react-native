@@ -1,631 +1,201 @@
 # Error Handling
 
-Comprehensive guide to handling errors in the Passgage SDK.
+This page lists every error the SDK (`@passgage/sdk-react-native` 1.0.21) reports and where each one comes from. There are four channels:
 
-## Table of Contents
+| Channel | What arrives there |
+|---------|--------------------|
+| `onError` of `usePassgageQRScanner` / `usePassgageNFCScanner`, and the hook's `error` | Failed scans, as `FlowResponseType` with an `error.code` |
+| `reject` callback of `login` / `loginWithAzure`, and `useAuthStore().error` | Failed sign-ins, as a message string |
+| `onUnauthorized` prop of `PassgageAccessProvider` | No session, or a session that ended |
+| `getLocationErrorCallback` / `locationPermissionErrorCallback` props | Location problems |
 
-- [Overview](#overview)
-- [Error Types](#error-types)
-- [Handling Errors](#handling-errors)
-- [Common Error Scenarios](#common-error-scenarios)
-- [Best Practices](#best-practices)
-- [Error Recovery](#error-recovery)
+The SDK does not throw from these flows. Scans and logins report through callbacks and state.
 
-## Overview
+## Scan errors
 
-The Passgage SDK provides comprehensive error handling through:
-
-- ✅ Callback-based error handlers
-- ✅ Promise rejection handling
-- ✅ Error state in hooks
-- ✅ Descriptive error messages
-- ✅ Error codes for programmatic handling
-
-## Error Types
-
-### Authentication Errors
+### The shape
 
 ```typescript
-interface AuthError extends Error {
-  code: string;
+interface FlowResponseType {
+  success: boolean; // false for a failure
   message: string;
+  error?: {
+    code: string;
+    details?: string; // LOCATION_OUT_OF_RANGE: 'Distance: 240m'
+    status?: number; // HTTP status, when the API answered with an error
+  };
 }
 ```
 
-Common authentication error codes:
-- `INVALID_CREDENTIALS`: Wrong username or password
-- `USER_NOT_FOUND`: User does not exist
-- `ACCOUNT_DISABLED`: User account is disabled
-- `TOKEN_EXPIRED`: Access token has expired
-- `INVALID_TOKEN`: Token is malformed or invalid
-- `NETWORK_ERROR`: Network connection failed
+`message` is the text the API sent when there is one, otherwise a fixed English text from the SDK. `status` is set only when the API answered with an HTTP error.
 
-### API Errors
+### Branch on the code, not the message
+
+Messages can come from the API, so their wording and language can change. Codes do not. Show your own text per code, and fall back to `message` for codes you do not handle:
 
 ```typescript
-interface ApiError extends Error {
-  code: string;
-  message: string;
-  status: number;    // HTTP status code
-  details?: any;     // Additional error details
+import {FlowResponseType} from '@passgage/sdk-react-native';
+
+export function scanErrorText(failure?: FlowResponseType): string {
+  switch (failure?.error?.code) {
+    case 'LOCATION_OUT_OF_RANGE':
+      return 'You are too far from this door.';
+    case 'LOCATION_PERMISSION_DENIED':
+      return 'Allow location access to use this door.';
+    case 'REPETITIVE_READ':
+      return 'This code was just used. Wait a moment.';
+    case 'NETWORK_ERROR':
+      return 'No connection. Try again.';
+    default:
+      return failure?.message ?? 'Something went wrong.';
+  }
 }
 ```
 
-Common API error codes:
-- `VALIDATION_ERROR`: Request data validation failed
-- `AUTHORIZATION_ERROR`: User not authorized for action
-- `NOT_FOUND`: Resource not found
-- `RATE_LIMIT`: Too many requests
-- `SERVER_ERROR`: Internal server error
+The QR hook types its callback as `onError?: (error?: FlowResponseType) => void`, so use `failure?.error?.code` there. The NFC hook passes a value that is always set: `(error: FlowResponseType) => void`.
 
-### Feature-Specific Errors
+### Every scan error code
 
-**QR Scanner:**
-- `INVALID_QR_CODE`: QR code format is invalid
-- `QR_EXPIRED`: QR code has expired
-- `ACCESS_DENIED`: User not authorized for location
-- `OUTSIDE_GEOFENCE`: User too far from location
+Steps refer to the entrance flow described in [qr-scanner.md](./features/qr-scanner.md#what-happens-on-a-scan): 1 format, 2 access list, 3 repeated read, 4 range check, 5 IoT trigger and entrance request.
 
-**NFC Scanner:**
-- `NFC_NOT_SUPPORTED`: Device doesn't have NFC
-- `NFC_DISABLED`: NFC is turned off
-- `INVALID_NFC_CARD`: Card not recognized
-- `NFC_READ_ERROR`: Failed to read NFC tag
+| Code | Where it comes from | HTTP | SDK message (when the API sent none) | Suggested user message |
+|------|---------------------|------|--------------------------------------|------------------------|
+| `DEVICE_NOT_FOUND` | The scanned code matches no device in `qrDevices`, even after a reload (before step 1). Also an API answer 404 in step 5 | 404 when from the API | `QR Device not found` / `NFC device not found` | "This code is not linked to a door you can use." |
+| `INVALID_QR_FORMAT` | Step 1: the code is empty. In practice only when you pass a `device` to `scan` with an empty code, or call `NfcAccessService.validateNFC` with an empty `nfcCode` | – | `Invalid QR code format` | "The code could not be read." |
+| `QR_ACCESS_DENIED` | Step 2: the code is not in `qrAccessDevices` | – | `You do not have permission. Please contact your administrator` | "You do not have access to this door." |
+| `REPETITIVE_READ` | Step 3: the same code was read successfully in the last 30 seconds | – | `QR code was recently scanned. Please wait before scanning again.` (NFC: `NFC code ...`) | "Already recorded. Wait a moment before trying again." |
+| `LOCATION_PERMISSION_DENIED` | Step 4: the device has a range and the location permission is missing | – | `Location permission is required to use this device` | "Allow location access in Settings." |
+| `LOCATION_UNAVAILABLE` | Step 4: the device has a range and no usable location could be read | – | `Your location could not be determined. Please try again` | "Your location could not be found. Try again, ideally near a window or outdoors." |
+| `LOCATION_OUT_OF_RANGE` | Step 4: the user is outside the range. `details` gives the distance in meters | – | `You are not within the allowed range of this device` | "You are too far from this door." |
+| `IOT_TRIGGER_FAILED` | Step 5: the API answered the IoT trigger without success. (If the trigger request fails with an HTTP error, you get one of the HTTP codes below instead) | – | `Trigger IOT validation failed` | "The door did not open. Try again." |
+| `REQUEST_REJECTED` | Step 5: the API answered the entrance request without success, or answered with a 4xx not listed in this table | e.g. 400, 409, 422 | `QR code validation failed` / `Enterance validation failed` | Show `message` |
+| `NETWORK_ERROR` | Step 5: the request got no answer (offline, timeout) | – | the HTTP client's message | "No connection. Try again." |
+| `UNAUTHORIZED` | Step 5: 401, and refreshing the session did not help | 401 | API text | "Your session has ended. Sign in again." |
+| `ACCESS_DENIED` | Step 5: the API refused the user for this device | 403 | API text | "You do not have access to this door." |
+| `PHONE_MATCHING_REQUIRED` | Step 5: the company requires a matched phone | 403 | API text | "This phone must be matched to your account. Contact your administrator." |
+| `APP_UPDATE_REQUIRED`, `UNTRUSTED_DEVICE` | Step 5: the company enforces device integrity | 422 | API text | "Entrances are blocked by a company setting. Contact your administrator." |
+| `RATE_LIMITED` | Step 5: too many requests | 429 | API text | "Too many attempts. Wait a little." |
+| `SERVER_ERROR` | Step 5: server error | 5xx | API text | "Passgage is not available. Try again later." |
+| `QR_SCAN_FAILED` | QR hook: an unexpected error during the scan | – | the error's message, or `Qr scan failed` | "Something went wrong. Try again." |
+| `NFC_SCAN_FAILED` | NFC hook: an unexpected error during the read (not a user cancel) | – | the error's message, or `NFC scanning failed` | "The card could not be read. Try again." |
+| `NFC_DISABLED` | NFC hook, Android: NFC is turned off. Checked before waiting for a tag | – | `NFC is turned off` | "Turn on NFC in Settings." |
+| `NFC_TAG_UNREADABLE` | NFC hook: the tag has no id | – | `NFC tag could not be read` | "The card could not be read. Hold it still and try again." |
 
-**Check-In:**
-- `LOCATION_UNAVAILABLE`: Cannot get device location
-- `NO_BRANCHES_FOUND`: No branches within radius
-- `ALREADY_CHECKED_IN`: User already checked in
-- `TOO_FAR_FROM_BRANCH`: Outside check-in radius
+### How an HTTP error becomes a code
 
-**Remote Work:**
-- `ALREADY_WORKING`: Active work session exists
-- `NO_ACTIVE_SESSION`: No session to end
-- `OUTSIDE_WORKING_HOURS`: Not allowed at this time
+For a failed request in step 5 the SDK picks the code in this order:
 
-## Handling Errors
+1. No HTTP answer at all: `NETWORK_ERROR` (no `status`).
+2. The error body has a `code` string: that code in upper case, with `status`. This is how `app_update_required` becomes `APP_UPDATE_REQUIRED` and `untrusted_device` becomes `UNTRUSTED_DEVICE`. The API may send other codes this way, so always keep a `default` branch.
+3. The body's `errors` list has an item with `field_name: 'phone_matching_required'`: `PHONE_MATCHING_REQUIRED`.
+4. By status: 401 `UNAUTHORIZED`, 403 `ACCESS_DENIED`, 404 `DEVICE_NOT_FOUND`, 429 `RATE_LIMITED`, 500 and above `SERVER_ERROR`, anything else `REQUEST_REJECTED`.
 
-### Using Callbacks
+A 401 is first answered by one token refresh and one retry of the request. `UNAUTHORIZED` reaches `onError` only when that did not help. If the API refused the refresh, the user is also logged out and `onUnauthorized` is called. See [token-management.md](./token-management.md).
 
-Most hooks accept `onError` callback:
+### Company settings the SDK cannot satisfy
 
-```typescript
-const {login} = usePassgageAuth({
-  onLoginError: (error) => {
-    // Handle error
-    console.error('Login failed:', error);
-    Alert.alert('Login Failed', error.message);
-  },
-});
-```
+Three codes mean a setting of the user's company blocks the read. Retrying does not help, and there is nothing to fix in the app:
 
-### Using Error State
+- `APP_UPDATE_REQUIRED` and `UNTRUSTED_DEVICE` (422): the company enforces device integrity. The SDK does not send an integrity report, so reads are refused while that company setting is on.
+- `PHONE_MATCHING_REQUIRED` (403): the company requires the user's phone to be matched to the account.
 
-Hooks provide error state:
+Tell the user to contact their administrator, and raise it with Passgage if your users need SDK access under these settings.
 
-```typescript
-const {login, error, isLoading} = usePassgageAuth();
+### What to log
 
-// Display error in UI
-{error && (
-  <Text style={{color: 'red'}}>
-    {error.message}
-  </Text>
-)}
-```
-
-### Using Try-Catch
-
-Handle errors with try-catch:
+Log `error.code`, `error.status`, `error.details` and `message` together. That is enough to tell a range problem from a permission problem from an API refusal:
 
 ```typescript
-const {login} = usePassgageAuth();
-
-try {
-  const result = await login({username, password});
-
-  if (!result.success) {
-    // Handle failed login
-    Alert.alert('Error', result.error);
-  }
-} catch (error: any) {
-  // Handle exception
-  Alert.alert('Error', error.message);
-}
-```
-
-### Combined Approach
-
-Best practice - use all three:
-
-```typescript
-const {login, error, isLoading} = usePassgageAuth({
-  onLoginError: (error) => {
-    // Callback for immediate handling
-    logError('login_failed', error);
-  },
-});
-
-const handleLogin = async () => {
-  try {
-    const result = await login({username, password});
-
-    if (!result.success) {
-      // Check result for business logic errors
-      switch (result.error) {
-        case 'INVALID_CREDENTIALS':
-          Alert.alert('Error', 'Invalid username or password');
-          break;
-        case 'ACCOUNT_DISABLED':
-          Alert.alert('Error', 'Your account has been disabled');
-          break;
-        default:
-          Alert.alert('Error', result.error || 'Login failed');
-      }
-    } else {
-      // Success
-      navigation.navigate('Home');
-    }
-  } catch (error: any) {
-    // Catch unexpected errors
-    Alert.alert('Error', 'An unexpected error occurred');
-    console.error('Login error:', error);
-  }
-};
-
-// Display error state in UI
-{error && (
-  <Text style={styles.errorText}>{error.message}</Text>
-)}
-```
-
-## Common Error Scenarios
-
-### Network Errors
-
-```typescript
-import NetInfo from '@react-native-community/netinfo';
-
-const {login} = usePassgageAuth({
-  onLoginError: async (error) => {
-    // Check if it's a network error
-    if (error.message.includes('Network') || error.message.includes('timeout')) {
-      const netInfo = await NetInfo.fetch();
-
-      if (!netInfo.isConnected) {
-        Alert.alert(
-          'No Internet Connection',
-          'Please check your internet connection and try again'
-        );
-      } else {
-        Alert.alert(
-          'Connection Error',
-          'Unable to reach the server. Please try again later.'
-        );
-      }
-    } else {
-      Alert.alert('Error', error.message);
-    }
-  },
-});
-```
-
-### Validation Errors
-
-```typescript
-const handleLogin = async () => {
-  // Client-side validation
-  if (!username.trim()) {
-    Alert.alert('Error', 'Please enter your username');
-    return;
-  }
-
-  if (!password.trim()) {
-    Alert.alert('Error', 'Please enter your password');
-    return;
-  }
-
-  if (password.length < 6) {
-    Alert.alert('Error', 'Password must be at least 6 characters');
-    return;
-  }
-
-  // Attempt login
-  try {
-    const result = await login({username, password});
-
-    if (!result.success) {
-      // Server-side validation errors
-      Alert.alert('Error', result.error);
-    }
-  } catch (error: any) {
-    Alert.alert('Error', error.message);
-  }
-};
-```
-
-### Permission Errors
-
-```typescript
-const {getNearbyBranches} = usePassgageCheckIn();
-
-const loadBranches = async () => {
-  try {
-    const result = await getNearbyBranches();
-
-    if (!result.success) {
-      switch (result.error) {
-        case 'LOCATION_UNAVAILABLE':
-          Alert.alert(
-            'Location Required',
-            'Please enable location services to find nearby branches',
-            [
-              {text: 'Cancel'},
-              {text: 'Open Settings', onPress: () => Linking.openSettings()}
-            ]
-          );
-          break;
-
-        case 'LOCATION_PERMISSION_DENIED':
-          Alert.alert(
-            'Permission Denied',
-            'Location permission is required for check-in'
-          );
-          break;
-
-        default:
-          Alert.alert('Error', result.error);
-      }
-    }
-  } catch (error: any) {
-    Alert.alert('Error', error.message);
-  }
-};
-```
-
-### Timeout Errors
-
-```typescript
-const {scan, isLoading} = usePassgageQRScanner({
-  onError: (error) => {
-    if (error.message.includes('timeout')) {
-      Alert.alert(
-        'Request Timeout',
-        'The request took too long. Please check your connection and try again.'
-      );
-    } else {
-      Alert.alert('Error', error.message);
-    }
-  },
-});
-
-// Or implement custom timeout
-const scanWithTimeout = async (qrCode: string) => {
-  const timeoutPromise = new Promise((_, reject) => {
-    setTimeout(() => reject(new Error('Request timeout')), 10000);
+onError: failure => {
+  console.warn('[passgage] scan failed', {
+    code: failure?.error?.code,
+    status: failure?.error?.status,
+    details: failure?.error?.details,
+    message: failure?.message,
   });
-
-  try {
-    await Promise.race([
-      scan(qrCode),
-      timeoutPromise
-    ]);
-  } catch (error: any) {
-    Alert.alert('Error', error.message);
-  }
-};
+},
 ```
 
-## Best Practices
+## Sign-in errors
 
-### 1. Always Handle Errors
+`login` and `loginWithAzure` on `useAuthStore` report a failure in two places:
+
+- the `reject(message)` callback, the third argument;
+- `useAuthStore().error`, a `string | null`. It is reset when the next login starts; `clearError()` resets it by hand.
 
 ```typescript
-// ❌ Bad - no error handling
-const handleScan = async (qrCode: string) => {
-  await scan(qrCode);
-};
+import {useAuthStore} from '@passgage/sdk-react-native';
 
-// ✅ Good - comprehensive error handling
-const handleScan = async (qrCode: string) => {
-  try {
-    const result = await scan(qrCode);
+const {login, loading, error, clearError} = useAuthStore();
 
-    if (!result.success) {
-      Alert.alert('Scan Failed', result.error);
-    } else {
-      Alert.alert('Success', 'Access granted');
+login(
+  {login: email, password},
+  user => console.log('Signed in', user?.fullName),
+  message => Alert.alert('Sign-in failed', message),
+);
+```
+
+What `message` contains:
+
+| Situation | Message |
+|-----------|---------|
+| The API refused the credentials or the Azure token (wrong password, unknown user, invalid `id_token`) | The text the API sent |
+| The API answered without tokens and without a text | `Login failed` / `Azure login failed` |
+| No answer (offline, timeout) | The HTTP client's error message, or `An error occurred during login` / `An error occurred during Azure login` |
+
+Before 1.0.21 a wrong password showed `Request failed with status code 422`. It now shows the API's message.
+
+The store hands over text only. The underlying `AuthService.login` / `AuthService.loginWithAzure` results also carry a `code` (`LOGIN_FAILED`, `AZURE_LOGIN_FAILED`, or a network code) and `status`. Calling those services directly does not start a session in the store, though, so sign in through `useAuthStore`.
+
+A refused login (wrong password) also signs out the session that was active before it. A login that fails on the network keeps that session.
+
+More in [authentication.md](./authentication.md).
+
+## `onUnauthorized`
+
+`PassgageAccessProvider` calls `onUnauthorized(error)` when the app has to show its login. `error.message` says why:
+
+| `error.message` | When |
+|-----------------|------|
+| `No active session. Login is required` | No `msalToken`, and no stored session (first launch, after `logout()`, or a stored session the API refused to renew). Also on every start with `rememberUser={false}` |
+| `Session expired. Login is required` | A 401 could not be fixed by a refresh because the API refused it. The user has been logged out. Called once per ended session |
+| `Azure login failed: <reason>` | The provider was given `msalToken` and the Azure login on mount failed |
+
+It is not called when the Keychain cannot be read because the phone is locked (iOS). The provider then waits until the app is in the foreground and looks again.
+
+Use `useAuthStore().initialized` to avoid flashing the login screen: it is `false` until it is known whether there is a session.
+
+## Location errors
+
+The provider reports location problems through two props:
+
+| Prop | Called when |
+|------|-------------|
+| `getLocationErrorCallback(error)` | Reading the location failed: on mount, when a scanner screen starts reading the location, and when a scan reads it. `error` is the error object of `react-native-geolocation-service`. `error.code === 1` means the permission is missing; the other codes are defined by that library |
+| `locationPermissionErrorCallback(error)` | The state of the location permission could not be checked |
+
+```tsx
+<PassgageAccessProvider
+  baseURL="https://your-api.passgage.com"
+  getLocationErrorCallback={error => {
+    if (error?.code === 1) {
+      // Show a hint that location access is off
     }
-  } catch (error: any) {
-    Alert.alert('Error', error.message);
-    console.error('Scan error:', error);
-  }
-};
-```
-
-### 2. Provide User-Friendly Messages
-
-```typescript
-// ❌ Bad - technical error message
-Alert.alert('Error', 'ERR_CONNECTION_REFUSED');
-
-// ✅ Good - user-friendly message
-const getUserFriendlyMessage = (error: Error): string => {
-  const message = error.message.toLowerCase();
-
-  if (message.includes('network')) {
-    return 'Please check your internet connection';
-  }
-
-  if (message.includes('timeout')) {
-    return 'Request took too long. Please try again';
-  }
-
-  if (message.includes('denied')) {
-    return 'You do not have permission for this action';
-  }
-
-  return 'An error occurred. Please try again';
-};
-
-Alert.alert('Error', getUserFriendlyMessage(error));
-```
-
-### 3. Log Errors for Debugging
-
-```typescript
-const logError = (context: string, error: Error) => {
-  console.error(`[${context}]`, {
-    message: error.message,
-    stack: error.stack,
-    timestamp: new Date().toISOString(),
-  });
-
-  // Send to error tracking service in production
-  if (!__DEV__) {
-    Sentry.captureException(error, {
-      tags: {context},
-    });
-  }
-};
-
-const {login} = usePassgageAuth({
-  onLoginError: (error) => {
-    logError('login', error);
-    Alert.alert('Login Failed', error.message);
-  },
-});
-```
-
-### 4. Handle Specific Error Cases
-
-```typescript
-const handleCheckIn = async (branchId: string) => {
-  try {
-    const result = await checkInEntry({branchId, userId: user.id});
-
-    if (!result.success) {
-      // Handle specific error cases
-      switch (result.error) {
-        case 'ALREADY_CHECKED_IN':
-          Alert.alert(
-            'Already Checked In',
-            'You are already checked in. Would you like to check out?',
-            [
-              {text: 'No'},
-              {text: 'Check Out', onPress: () => handleCheckOut(branchId)}
-            ]
-          );
-          break;
-
-        case 'TOO_FAR_FROM_BRANCH':
-          Alert.alert(
-            'Too Far',
-            'You must be within 100m of the branch to check in'
-          );
-          break;
-
-        case 'OUTSIDE_WORKING_HOURS':
-          Alert.alert(
-            'Outside Hours',
-            'Check-in is only allowed during working hours'
-          );
-          break;
-
-        default:
-          Alert.alert('Check-In Failed', result.error);
-      }
-    }
-  } catch (error: any) {
-    Alert.alert('Error', 'Failed to check in. Please try again.');
-  }
-};
-```
-
-### 5. Implement Error Boundaries
-
-For catching React errors:
-
-```typescript
-import React, {Component, ReactNode} from 'react';
-
-interface Props {
-  children: ReactNode;
-}
-
-interface State {
-  hasError: boolean;
-  error?: Error;
-}
-
-class ErrorBoundary extends Component<Props, State> {
-  constructor(props: Props) {
-    super(props);
-    this.state = {hasError: false};
-  }
-
-  static getDerivedStateFromError(error: Error): State {
-    return {hasError: true, error};
-  }
-
-  componentDidCatch(error: Error, errorInfo: any) {
-    console.error('ErrorBoundary caught:', error, errorInfo);
-    // Log to error tracking service
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <View style={styles.errorContainer}>
-          <Text style={styles.errorTitle}>Something went wrong</Text>
-          <Text style={styles.errorMessage}>
-            {this.state.error?.message}
-          </Text>
-          <Button
-            title="Restart"
-            onPress={() => this.setState({hasError: false})}
-          />
-        </View>
-      );
-    }
-
-    return this.props.children;
-  }
-}
-
-// Usage
-<ErrorBoundary>
+  }}
+  locationPermissionErrorCallback={error => {
+    console.warn('Location permission check failed', error);
+  }}>
   <App />
-</ErrorBoundary>
+</PassgageAccessProvider>
 ```
 
-## Error Recovery
+These callbacks are informational. A scan that needs the location reports its own code (`LOCATION_PERMISSION_DENIED` or `LOCATION_UNAVAILABLE`) through `onError`, so you do not have to connect the two.
 
-### Retry Logic
+## Device list errors
 
-```typescript
-const retryOperation = async <T,>(
-  operation: () => Promise<T>,
-  maxRetries: number = 3,
-  delayMs: number = 1000
-): Promise<T> => {
-  let lastError: Error;
+When loading the device lists fails, `qrScannerStore.getState().error` holds the message. Scans then fail with `DEVICE_NOT_FOUND` until a reload succeeds. The SDK reloads the lists on its own when an unknown code is scanned, and `fetchQrDevicesAndAccess()` reloads them on request. See [qr-scanner.md](./features/qr-scanner.md#device-lookup-and-list-reloads).
 
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      return await operation();
-    } catch (error: any) {
-      lastError = error;
-      console.log(`Attempt ${i + 1} failed, retrying...`);
+## See also
 
-      if (i < maxRetries - 1) {
-        await new Promise(resolve => setTimeout(resolve, delayMs * (i + 1)));
-      }
-    }
-  }
-
-  throw lastError!;
-};
-
-// Usage
-const handleCheckIn = async (branchId: string) => {
-  try {
-    await retryOperation(
-      () => checkInEntry({branchId, userId: user.id}),
-      3, // Max 3 retries
-      1000 // 1 second delay
-    );
-
-    Alert.alert('Success', 'Checked in successfully');
-  } catch (error: any) {
-    Alert.alert('Error', 'Failed after 3 attempts');
-  }
-};
-```
-
-### Fallback Strategies
-
-```typescript
-// Try multiple approaches
-const loadBranches = async () => {
-  try {
-    // Try with GPS location
-    const result = await getNearbyBranches({radius: 5000});
-
-    if (result.success) {
-      setBranches(result.data || []);
-    }
-  } catch (error) {
-    console.error('Failed with GPS, trying manual location');
-
-    try {
-      // Fallback: Use last known location
-      const lastLocation = await getLastKnownLocation();
-      const result = await getNearbyBranches({
-        latitude: lastLocation.latitude,
-        longitude: lastLocation.longitude,
-        radius: 10000, // Larger radius
-      });
-
-      setBranches(result.data || []);
-    } catch (fallbackError) {
-      Alert.alert(
-        'Error',
-        'Unable to load branches. Please enable location services.'
-      );
-    }
-  }
-};
-```
-
-### Offline Support
-
-```typescript
-import NetInfo from '@react-native-community/netinfo';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
-const loadBranchesWithCache = async () => {
-  const netInfo = await NetInfo.fetch();
-
-  if (netInfo.isConnected) {
-    // Online: Fetch fresh data
-    try {
-      const result = await getNearbyBranches();
-
-      if (result.success && result.data) {
-        // Cache for offline use
-        await AsyncStorage.setItem(
-          'cached_branches',
-          JSON.stringify(result.data)
-        );
-
-        setBranches(result.data);
-      }
-    } catch (error) {
-      console.error('Failed to load branches online');
-      // Fall through to offline mode
-    }
-  } else {
-    // Offline: Use cached data
-    try {
-      const cached = await AsyncStorage.getItem('cached_branches');
-
-      if (cached) {
-        setBranches(JSON.parse(cached));
-        Alert.alert('Offline Mode', 'Showing cached data');
-      } else {
-        Alert.alert('No Internet', 'Please connect to the internet');
-      }
-    } catch (error) {
-      Alert.alert('Error', 'Unable to load cached data');
-    }
-  }
-};
-```
-
-## Next Steps
-
-- [Authentication](./authentication.md) - Authentication errors
-- [Troubleshooting](./troubleshooting.md) - Common issues
-- [FAQ](./faq.md) - Error-related questions
-- [Best Practices](./best-practices.md) - Error handling patterns
+- [troubleshooting.md](./troubleshooting.md): symptoms and fixes
+- [faq.md](./faq.md)

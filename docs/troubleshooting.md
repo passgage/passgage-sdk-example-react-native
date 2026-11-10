@@ -1,684 +1,218 @@
-# Troubleshooting Guide
+# Troubleshooting
 
-This guide helps you diagnose and fix common issues with the Passgage SDK.
+Symptom, cause and fix for problems seen when integrating `@passgage/sdk-react-native` 1.0.21. Error codes are explained in [error-handling.md](./error-handling.md).
 
-## Table of Contents
+When you report a problem, include the SDK version (`SDK_VERSION` is exported), the platform, and the `error.code`, `error.status`, `error.details` and `message` of the failure.
 
-- [Installation Issues](#installation-issues)
-- [Build Issues](#build-issues)
-- [Runtime Errors](#runtime-errors)
-- [Authentication Issues](#authentication-issues)
-- [Feature-Specific Issues](#feature-specific-issues)
-- [Performance Issues](#performance-issues)
-- [Debugging Tips](#debugging-tips)
+## Contents
 
-## Installation Issues
+- [Installation](#installation)
+- [Location](#location)
+- [QR scans](#qr-scans)
+- [NFC](#nfc)
+- [Sign-in and session](#sign-in-and-session)
+- [API refusals](#api-refusals)
 
-### Issue: "Cannot find module '@passgage/sdk-react-native'"
+## Installation
 
-**Symptoms:**
-```
-Error: Cannot find module '@passgage/sdk-react-native'
-```
+### "Native module ... not found" / "... is null" at start
 
-**Solutions:**
+**Cause.** The SDK imports four native modules as peer dependencies. React Native only links native modules that are direct dependencies of the app, so they are missing when only the SDK is installed.
 
-1. **Install the package:**
-   ```bash
-   npm install @passgage/sdk-react-native
-   # or
-   yarn add @passgage/sdk-react-native
-   ```
+**Fix.** Install them in the app, then rebuild:
 
-2. **Clear Metro cache:**
-   ```bash
-   npx react-native start --reset-cache
-   ```
-
-3. **Reinstall dependencies:**
-   ```bash
-   rm -rf node_modules package-lock.json yarn.lock
-   npm install
-   # or
-   yarn install
-   ```
-
-### Issue: Peer dependency warnings
-
-**Symptoms:**
-```
-warning " > @passgage/sdk-react-native@1.0.4" has unmet peer dependency "@react-native-community/geolocation@^3.0.0"
-```
-
-**Solutions:**
-
-Install the required peer dependencies:
 ```bash
-npm install @react-native-community/geolocation react-native-keychain
+npm install react-native-geolocation-service react-native-permissions react-native-keychain react-native-nfc-manager
+cd ios && pod install && cd ..
 ```
 
-Optional peer dependencies (install if using these features):
-```bash
-npm install react-native-nfc-manager  # For NFC scanning
-npm install react-native-vision-camera  # For QR camera
+| Package | Version |
+|---------|---------|
+| `react-native-geolocation-service` | ^5.3.1 |
+| `react-native-permissions` | ^5.4.4 |
+| `react-native-keychain` | >=8.0.0 |
+| `react-native-nfc-manager` | ^3.14.0 |
+
+Then follow the native setup of each library. A Metro reload is not enough after adding native modules; rebuild the app.
+
+## Location
+
+### iOS never asks for the location permission
+
+**Cause.** `react-native-permissions` reports a permission as unavailable unless it is enabled in the `Podfile`. The provider then tries to read the location without asking, the user is never prompted, and scans at devices with a range fail with `LOCATION_PERMISSION_DENIED` or `LOCATION_UNAVAILABLE`.
+
+**Fix.** In `ios/Podfile`:
+
+```ruby
+setup_permissions(['LocationWhenInUse'])
 ```
 
-### Issue: Pod install fails on iOS
-
-**Symptoms:**
-```
-[!] CocoaPods could not find compatible versions for pod "..."
-```
-
-**Solutions:**
-
-1. **Update CocoaPods:**
-   ```bash
-   sudo gem install cocoapods
-   ```
-
-2. **Clear CocoaPods cache:**
-   ```bash
-   cd ios
-   pod deintegrate
-   pod cache clean --all
-   pod install
-   cd ..
-   ```
-
-3. **Update pod repository:**
-   ```bash
-   cd ios
-   pod repo update
-   pod install
-   cd ..
-   ```
-
-## Build Issues
-
-### Issue: iOS build fails
-
-**Symptoms:**
-```
-❌  'React/RCTBridgeModule.h' file not found
-```
-
-**Solutions:**
-
-1. **Clean and rebuild:**
-   ```bash
-   cd ios
-   xcodebuild clean
-   pod install
-   cd ..
-   npx react-native run-ios
-   ```
-
-2. **Reset Xcode derived data:**
-   ```bash
-   rm -rf ~/Library/Developer/Xcode/DerivedData
-   ```
-
-3. **Check minimum iOS version:**
-   Ensure `ios/Podfile` has:
-   ```ruby
-   platform :ios, '13.0'
-   ```
-
-### Issue: Android build fails
-
-**Symptoms:**
-```
-error: package android.support.annotation does not exist
-```
-
-**Solutions:**
-
-1. **Clean Android build:**
-   ```bash
-   cd android
-   ./gradlew clean
-   cd ..
-   ```
-
-2. **Check minimum SDK version:**
-   In `android/build.gradle`:
-   ```gradle
-   minSdkVersion = 23
-   ```
-
-3. **Enable AndroidX:**
-   In `android/gradle.properties`:
-   ```properties
-   android.useAndroidX=true
-   android.enableJetifier=true
-   ```
-
-4. **Clear Gradle cache:**
-   ```bash
-   cd android
-   ./gradlew clean
-   ./gradlew cleanBuildCache
-   cd ..
-   ```
-
-### Issue: Metro bundler stuck
-
-**Symptoms:**
-Metro bundler shows no progress or is stuck.
-
-**Solutions:**
-
-1. **Reset Metro cache:**
-   ```bash
-   npx react-native start --reset-cache
-   ```
-
-2. **Kill Metro process:**
-   ```bash
-   lsof -ti:8081 | xargs kill
-   npx react-native start
-   ```
-
-3. **Clear watchman:**
-   ```bash
-   watchman watch-del-all
-   ```
-
-## Runtime Errors
-
-### Issue: "Invariant Violation: PassgageAccessProvider is not configured"
-
-**Symptoms:**
-```
-Invariant Violation: PassgageAccessProvider is not configured
-```
-
-**Cause:**
-PassgageAccessProvider is not wrapping your app, or hooks are used outside the provider.
-
-**Solution:**
-
-Ensure PassgageAccessProvider wraps your entire app:
-
-```typescript
-// App.tsx
-import {PassgageAccessProvider} from '@passgage/sdk-react-native';
-
-export default function App() {
-  return (
-    <PassgageAccessProvider
-      apiUrl="https://api.passgage.com"
-      apiKey="your-api-key"
-    >
-      <NavigationContainer>
-        <YourApp />
-      </NavigationContainer>
-    </PassgageAccessProvider>
-  );
-}
-```
-
-Don't use SDK hooks outside the provider:
-
-```typescript
-// ❌ Wrong - outside provider
-function AppContainer() {
-  const {user} = usePassgageAuth(); // ERROR!
-
-  return (
-    <PassgageAccessProvider ...>
-      <App />
-    </PassgageAccessProvider>
-  );
-}
-
-// ✅ Correct - inside provider
-function AppContainer() {
-  return (
-    <PassgageAccessProvider ...>
-      <App />
-    </PassgageAccessProvider>
-  );
-}
-
-function App() {
-  const {user} = usePassgageAuth(); // OK!
-  // ...
-}
-```
-
-### Issue: "Network request failed"
-
-**Symptoms:**
-```
-Error: Network request failed
-TypeError: Network request failed
-```
-
-**Solutions:**
-
-1. **Check internet connection:**
-   ```typescript
-   import NetInfo from '@react-native-community/netinfo';
-
-   const netInfo = await NetInfo.fetch();
-   console.log('Connected:', netInfo.isConnected);
-   ```
-
-2. **Verify API URL:**
-   ```typescript
-   // Test if API is reachable
-   fetch('https://your-api.passgage.com/health')
-     .then(res => console.log('Status:', res.status))
-     .catch(err => console.error('Error:', err));
-   ```
-
-3. **Check iOS App Transport Security:**
-   If using HTTP (not recommended), add to `Info.plist`:
-   ```xml
-   <key>NSAppTransportSecurity</key>
-   <dict>
-     <key>NSAllowsArbitraryLoads</key>
-     <true/>
-   </dict>
-   ```
-
-4. **Check Android cleartext traffic:**
-   If using HTTP (not recommended), add to `AndroidManifest.xml`:
-   ```xml
-   <application
-     android:usesCleartextTraffic="true">
-   ```
-
-### Issue: App crashes on startup
-
-**Symptoms:**
-App crashes immediately after launch with no clear error.
-
-**Solutions:**
-
-1. **Check native logs:**
-   - iOS: Open Xcode, Window → Devices and Simulators → View Device Logs
-   - Android: `adb logcat`
-
-2. **Common causes:**
-   - Missing peer dependencies
-   - Incorrect native linking
-   - Corrupted build cache
-
-3. **Full reset:**
-   ```bash
-   # Clean everything
-   rm -rf node_modules ios/Pods ios/build android/build
-   rm -rf ios/Podfile.lock yarn.lock package-lock.json
-
-   # Reinstall
-   npm install
-   cd ios && pod install && cd ..
-
-   # Rebuild
-   npx react-native run-ios
-   # or
-   npx react-native run-android
-   ```
-
-## Authentication Issues
-
-### Issue: Login always fails
-
-**Symptoms:**
-Login returns error even with correct credentials.
-
-**Solutions:**
-
-1. **Check API credentials:**
-   ```typescript
-   console.log('API URL:', apiUrl);
-   console.log('API Key:', apiKey ? 'Set' : 'Missing');
-   ```
-
-2. **Verify credentials are correct:**
-   Test login with curl:
-   ```bash
-   curl -X POST https://api.passgage.com/auth/login \
-     -H "Content-Type: application/json" \
-     -H "X-API-Key: your-api-key" \
-     -d '{"username":"test@example.com","password":"password"}'
-   ```
-
-3. **Check error message:**
-   ```typescript
-   const {login} = usePassgageAuth({
-     onLoginError: (error) => {
-       console.error('Login error:', error);
-       console.error('Error message:', error.message);
-       console.error('Error details:', JSON.stringify(error));
-     },
-   });
-   ```
-
-### Issue: Tokens expire immediately
-
-**Symptoms:**
-User is logged out immediately after login.
-
-**Cause:**
-Device clock is incorrect or token expiration time is wrong.
-
-**Solutions:**
-
-1. **Check device time:**
-   Settings → General → Date & Time → Set Automatically
-
-2. **Check token expiration:**
-   ```typescript
-   import {getStoredToken} from '@passgage/sdk-react-native';
-
-   const token = await getStoredToken();
-   console.log('Token expires at:', new Date(token.expiresAt));
-   console.log('Current time:', new Date());
-   ```
-
-3. **Contact backend team:**
-   Token expiration might be configured too short on the backend.
-
-### Issue: User info not available
-
-**Symptoms:**
-```typescript
-const {user} = usePassgageAuth();
-console.log(user); // null
-```
-
-**Cause:**
-User is not logged in, or token has expired.
-
-**Solutions:**
-
-1. **Check loading state:**
-   ```typescript
-   const {user, isLoading} = usePassgageAuth();
-
-   if (isLoading) {
-     return <LoadingScreen />;
-   }
-
-   if (!user) {
-     return <LoginScreen />;
-   }
-
-   return <HomeScreen />;
-   ```
-
-2. **Force refresh:**
-   ```typescript
-   const {user, refreshUser} = usePassgageAuth();
-
-   useEffect(() => {
-     if (!user) {
-       refreshUser();
-     }
-   }, []);
-   ```
-
-## Feature-Specific Issues
-
-### QR Scanner Issues
-
-**Issue: QR code validation always fails**
-
-**Solutions:**
-
-1. **Check QR code format:**
-   ```typescript
-   console.log('QR Code:', qrCode);
-   console.log('QR Code length:', qrCode.length);
-   ```
-
-2. **Test with known valid code:**
-   Ask backend team for a test QR code.
-
-3. **Check backend logs:**
-   Backend might reject the code for reasons not returned to client.
-
-### NFC Scanner Issues
-
-**Issue: "NFC not supported"**
-
-**Solutions:**
-
-1. **Check NFC hardware:**
-   ```typescript
-   import NfcManager from 'react-native-nfc-manager';
-
-   const supported = await NfcManager.isSupported();
-   console.log('NFC supported:', supported);
-   ```
-
-2. **Check device compatibility:**
-   - Android: Most devices since 2012
-   - iOS: iPhone 7 and newer
-
-**Issue: NFC scanning hangs**
-
-**Solutions:**
-
-1. **Stop previous session:**
-   ```typescript
-   await stopScanning();
-   await new Promise(resolve => setTimeout(resolve, 500));
-   await startScanning();
-   ```
-
-2. **Check NFC is enabled:**
-   ```typescript
-   const enabled = await NfcManager.isEnabled();
-   if (!enabled) {
-     Alert.alert('Please enable NFC in settings');
-     NfcManager.goToNfcSetting();
-   }
-   ```
-
-### Location/Check-In Issues
-
-**Issue: "Location not available"**
-
-**Solutions:**
-
-1. **Check location permission:**
-   ```typescript
-   import {check, PERMISSIONS, request} from 'react-native-permissions';
-
-   const status = await check(
-     Platform.OS === 'ios'
-       ? PERMISSIONS.IOS.LOCATION_WHEN_IN_USE
-       : PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION
-   );
-
-   console.log('Location permission:', status);
-   ```
-
-2. **Request permission:**
-   ```typescript
-   const status = await request(
-     Platform.OS === 'ios'
-       ? PERMISSIONS.IOS.LOCATION_WHEN_IN_USE
-       : PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION
-   );
-
-   if (status !== 'granted') {
-     Alert.alert('Location permission required');
-   }
-   ```
-
-3. **Check location services:**
-   Settings → Privacy → Location Services → Enable
-
-**Issue: No branches found**
-
-**Solutions:**
-
-1. **Increase search radius:**
-   ```typescript
-   const result = await getNearbyBranches({
-     radius: 20000, // 20km instead of 5km
-   });
-   ```
-
-2. **Check current location:**
-   ```typescript
-   import Geolocation from '@react-native-community/geolocation';
-
-   Geolocation.getCurrentPosition(
-     position => console.log('Location:', position.coords),
-     error => console.error('Location error:', error)
-   );
-   ```
-
-3. **Verify branches exist:**
-   Contact your Passgage admin to verify branches are configured in the system.
-
-## Performance Issues
-
-### Issue: App is slow/laggy
-
-**Solutions:**
-
-1. **Enable Hermes (Android):**
-   In `android/app/build.gradle`:
-   ```gradle
-   project.ext.react = [
-       enableHermes: true
-   ]
-   ```
-
-2. **Reduce API calls:**
-   ```typescript
-   // ❌ Too many calls
-   useEffect(() => {
-     loadBranches();
-   }, [search]); // Calls on every keystroke
-
-   // ✅ Debounced
-   const debouncedSearch = useDebounce(search, 500);
-   useEffect(() => {
-     loadBranches();
-   }, [debouncedSearch]);
-   ```
-
-3. **Use pagination:**
-   ```typescript
-   const [page, setPage] = useState(1);
-
-   const loadMore = () => {
-     setPage(page + 1);
-   };
-   ```
-
-### Issue: High memory usage
-
-**Solutions:**
-
-1. **Clear old data:**
-   ```typescript
-   // Clear history older than 30 days
-   const filtered = history.filter(item => {
-     const age = Date.now() - new Date(item.timestamp).getTime();
-     return age < 30 * 24 * 60 * 60 * 1000;
-   });
-   ```
-
-2. **Limit list size:**
-   ```typescript
-   <FlatList
-     data={branches}
-     maxToRenderPerBatch={10}
-     windowSize={5}
-     removeClippedSubviews={true}
-   />
-   ```
-
-## Debugging Tips
-
-### Enable Debug Logging
-
-```typescript
-// In development
-<PassgageAccessProvider
-  apiUrl="..."
-  apiKey="..."
-  debug={__DEV__}
->
-  <App />
-</PassgageAccessProvider>
-```
-
-### View Network Requests
-
-Use Flipper or React Native Debugger to inspect network requests:
-
-1. **Install Flipper:** https://fbflipper.com
-2. **Enable Network plugin**
-3. **View all SDK API calls**
-
-### Log All SDK Calls
-
-```typescript
-const {login} = usePassgageAuth({
-  onLoginSuccess: (user) => {
-    console.log('[SDK] Login success:', user);
-  },
-  onLoginError: (error) => {
-    console.error('[SDK] Login error:', error);
-  },
-});
-
-const {scan} = usePassgageQRScanner({
-  onSuccess: (entrance) => {
-    console.log('[SDK] QR scan success:', entrance);
-  },
-  onError: (error) => {
-    console.error('[SDK] QR scan error:', error);
-  },
-});
-```
-
-### Check SDK Version
-
-```typescript
-import {version} from '@passgage/sdk-react-native/package.json';
-console.log('SDK version:', version);
-```
-
-### Test API Connectivity
-
-```typescript
-// Test basic connectivity
-fetch('https://api.passgage.com/health')
-  .then(res => {
-    console.log('API reachable, status:', res.status);
-    return res.json();
-  })
-  .then(data => console.log('Health check:', data))
-  .catch(err => console.error('API unreachable:', err));
-```
-
-## Getting Help
-
-If you can't resolve your issue:
-
-1. **Check the FAQ:** [FAQ](./faq.md)
-2. **Review documentation:** [Documentation](./README.md)
-3. **Contact support:** support@passgage.com
-4. **Open GitHub issue:** Include:
-   - SDK version
-   - React Native version
-   - Platform (iOS/Android)
-   - Steps to reproduce
-   - Error messages
-   - Relevant code snippets
-
----
-
-**Couldn't find a solution?** Contact support@passgage.com with detailed information about your issue.
+Add `NSLocationWhenInUseUsageDescription` to `Info.plist`, run `pod install`, and rebuild. On Android, add `ACCESS_FINE_LOCATION` to the manifest.
+
+### `LOCATION_PERMISSION_DENIED` although the app has asked
+
+**Cause.** The user refused the permission. The provider asks only when the permission has not been decided yet. Once it is blocked, the system does not show the prompt again.
+
+**Fix.** Ask the user to allow location access for the app in the system settings. `getLocationErrorCallback` receives an error with `code === 1` in this case, which you can use to show a hint. If the device does not need a range check, the company can turn the range off for it in Passgage.
+
+### `LOCATION_UNAVAILABLE`, mostly indoors
+
+**Cause.** The device has a range, and no usable location could be read. The scan waits up to 10 seconds for a new location (a location of at most 15 seconds ago is reused at once). If none arrives, a location of at most 5 minutes ago is accepted. Without one, the scan fails. GPS often has no fix inside buildings.
+
+**Fix.**
+
+- Make sure location services are on for the phone and the app.
+- Mount the scanner screen before the user reaches the door. The scanner hooks start reading the location when they mount, so a location is usually ready by the time of the scan.
+- Let the user try again; a later attempt may get a fix.
+- If the device is indoors and the range check is not needed, ask for the range to be turned off for that device in Passgage.
+
+### `LOCATION_OUT_OF_RANGE` while standing at the door
+
+**Cause.** The distance between the phone's location and the device's coordinates is larger than the device's range (QR: `range`, NFC: `nfc_range`; 100 meters when unset). GPS accuracy is not taken into account.
+
+**Fix.** Check `error.details` (for example `Distance: 240m`) against the device's coordinates and range in Passgage. A wrong coordinate or a very small range is the usual cause. On SDK versions before 1.0.21 the location from app start was used for every scan: update.
+
+## QR scans
+
+### `DEVICE_NOT_FOUND` ("QR Device not found") after the app started without network
+
+**Cause.** The device lists are loaded after sign-in or session restore. Without network that load fails, and the lists stay empty.
+
+**Fix.** 1.0.21 loads the lists again when an unknown code is scanned (if the lists are older than 30 seconds), so the next scan with network works. Before 1.0.21 the app had to be restarted; update. If it still fails:
+
+- Check the network.
+- Check that there is a session: `useAuthStore.getState().authStatus` is `true`. Without a session the lists are not reloaded.
+- Read `qrScannerStore.getState().error`: it holds the message of the failed load.
+- Check that the user may use the device. The list only contains devices the user may use.
+
+### `DEVICE_NOT_FOUND` right after launch, with network
+
+**Cause.** The scan ran before the stored session was restored or before sign-in finished.
+
+**Fix.** Wait until `useAuthStore().initialized` is `true` and `authStatus` is `true` before showing the scanner.
+
+### Several requests, or the door opens twice, for one QR code
+
+**Cause.** SDK versions before 1.0.21 sent a request for every `scan` call, and a camera reports a code on every frame.
+
+**Fix.** Update to 1.0.21: one scan runs at a time, and calls during a scan are ignored. Stop the camera, or ignore its codes, after `onSuccess`.
+
+### `REPETITIVE_READ` on the second attempt
+
+**Cause.** The same code was read successfully less than 30 seconds ago. This is intended.
+
+**Fix.** Wait 30 seconds, or pass `skipRepetitiveCheck: true` if your use case needs repeated reads. A failed read does not block the next one.
+
+## NFC
+
+### `startScanning` never finishes, or `isScanning` stays `true`
+
+**Cause.** SDK versions before 1.0.21: `isScanning` stayed `true` after the read, a cancelled scan rejected `startScanning`, and with NFC turned off on Android the scan waited forever.
+
+**Fix.** Update to 1.0.21. `startScanning` now resolves when the read is over (also after a failure or a cancel), and `isScanning` turns `false` once the reader is released.
+
+### `NFC_DISABLED`
+
+**Cause.** NFC is turned off on an Android phone. The hook checks this before it waits for a tag.
+
+**Fix.** Ask the user to turn NFC on in the system settings, then call `startScanning()` again.
+
+### Nothing happens when the card is held to the phone
+
+**Fix.** Check, in order:
+
+- `NfcManager.start()` is called once, in an effect, before `startScanning`.
+- `supportNFC` is `true`. It is `undefined` until the check on mount has finished.
+- `startScanning()` was called and `isScanning` is `true`. Each call reads one tag; call it again for the next card.
+- The native setup of `react-native-nfc-manager` is complete for the platform.
+
+### `DEVICE_NOT_FOUND` for an NFC card
+
+**Cause.** The decimal code built from the tag id matches no device's `nfc_code` in the user's list.
+
+**Fix.** Convert the raw id with `reversedHexToDec(nfcData)` and compare it with the `nfc_code` of the device in Passgage. If the card is right, the user may not have access to the device, or the lists are not loaded (see the QR section above).
+
+### `NFC_TAG_UNREADABLE`
+
+**Cause.** The library returned a tag without an id.
+
+**Fix.** Hold the card still against the phone and call `startScanning()` again.
+
+### NFC read rejected as "not within the allowed range" although QR works
+
+**Cause.** Since 1.0.21 an NFC read is checked against the device's NFC range (`nfc_range_matter` / `nfc_range`), not the QR range. The two settings can differ.
+
+**Fix.** Check the NFC range of the device in Passgage.
+
+## Sign-in and session
+
+### Login shows "Request failed with status code 422"
+
+**Cause.** SDK versions before 1.0.21 passed on the HTTP client's text for a refused login.
+
+**Fix.** Update to 1.0.21. `reject(message)` and `useAuthStore().error` now carry the API's message, for example for a wrong password. A login that fails on the network shows the HTTP client's message and keeps the session that was active before.
+
+### `onUnauthorized` is called at every start
+
+**Cause and fix.**
+
+- **First launch or after `logout()`:** there is no stored session. Expected: show your login.
+- **`rememberUser={false}`:** the provider signs out on every start by design. Leave it at the default `true` to restore the session.
+- **With `msalToken`:** the Azure login on mount failed; `error.message` starts with `Azure login failed:`. Check the token.
+- **SDK before 1.0.21 without `msalToken`:** the session was wiped on every mount. Update.
+
+Use `useAuthStore().initialized` to show a splash screen until it is known whether there is a session, so the login screen does not flash.
+
+### Users must sign in again after a while
+
+**Cause.** An access token is valid for 60 days and cannot be renewed once it has expired. The SDK renews a stored session older than 30 days when the app starts. A user who does not open the app for 60 days must sign in again. On versions before 1.0.21 every user was sent back to the login on day 60.
+
+**Fix.** Update to 1.0.21. After that, sign-in after 60 days without the app is expected. See [token-management.md](./token-management.md).
+
+### Session lost after using the Passgage app
+
+**Cause.** An account has one active mobile session at a time. Signing in through the Passgage app ends the SDK's session, and the other way round.
+
+**Fix.** Nothing to change in the app: the SDK refreshes its token on the next request. If the refresh is refused, `onUnauthorized` is called with `Session expired. Login is required`.
+
+### The session is gone after an app restart
+
+**Cause.** The login used `rememberUser: false`, or the provider has `rememberUser={false}`.
+
+**Fix.** Leave `rememberUser` at its default `true` in both places if the session should survive a restart.
+
+### On iOS the app opens to the login screen after starting in the background
+
+**Cause.** The Keychain cannot be read while the device is locked. Before 1.0.21 this was treated as "no session".
+
+**Fix.** Update to 1.0.21. The provider now waits until the app is in the foreground and looks again.
+
+## API refusals
+
+### Scans fail with `APP_UPDATE_REQUIRED` or `UNTRUSTED_DEVICE` (HTTP 422)
+
+**Cause.** The user's company enforces device integrity. The SDK does not send an integrity report, so the API refuses reads while that company setting is on.
+
+**Fix.** Nothing in the app can fix this. The company's Passgage administrator has to change the setting; contact Passgage if your users need SDK access under it.
+
+### Scans fail with `PHONE_MATCHING_REQUIRED` (HTTP 403)
+
+**Cause.** The company requires a matched phone for the user.
+
+**Fix.** A company setting, not an app problem. The user should contact their administrator.
+
+### Scans fail with `ACCESS_DENIED` (HTTP 403)
+
+**Cause.** The API refused the user for this device, although the SDK's own checks passed.
+
+**Fix.** Check the user's permissions for the device in Passgage.
+
+### Scans fail with `NETWORK_ERROR`
+
+**Cause.** The request got no answer: no network, or the request timed out (the provider's `timeout`, 30000 ms by default).
+
+**Fix.** Check the network and the provider's `baseURL`. The SDK does not retry or queue the read; the user scans again.
+
+## Still stuck
+
+See [faq.md](./faq.md), or contact devops@passgage.com with the details listed at the top of this page.

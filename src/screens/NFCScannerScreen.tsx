@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -8,10 +8,16 @@ import {
   ActivityIndicator,
 } from 'react-native';
 
+import NfcManager from 'react-native-nfc-manager';
 import { usePassgageNFCScanner } from '@passgage/sdk-react-native';
 
 export default function NFCScannerScreen() {
   const [lastScanResult, setLastScanResult] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Required once before any NFC call
+    NfcManager.start();
+  }, []);
 
   const { supportNFC, startScanning, stopScanning, isScanning, error } =
     usePassgageNFCScanner({
@@ -24,22 +30,24 @@ export default function NFCScannerScreen() {
         Alert.alert('Success', message);
       },
       onError: error => {
+        // NFC_DISABLED: NFC is turned off (Android). A cancelled scan does
+        // not call onError.
         const errorMessage = error.message || 'NFC validation failed';
-        setLastScanResult(`Error: ${errorMessage}`);
-        // Alert.alert('Failed', errorMessage);
+        const code = error.error?.code;
+        setLastScanResult(
+          `Error: ${errorMessage}${code ? ` (${code})` : ''}`,
+        );
       },
     });
 
-  const handleStartScan = async () => {
+  // startScanning resolves when the read is over; failures go to onError
+  const handleStartScan = () => {
+    setLastScanResult(null);
     startScanning();
   };
 
-  const handleStopScan = async () => {
-    try {
-      await stopScanning();
-    } catch (error: any) {
-      console.error('Stop NFC scan error:', error);
-    }
+  const handleStopScan = () => {
+    stopScanning();
   };
   return (
     <View style={styles.container}>
@@ -75,9 +83,7 @@ export default function NFCScannerScreen() {
           {!isScanning ? (
             <TouchableOpacity
               style={[styles.button, styles.scanButton]}
-              onPress={async () => {
-                handleStartScan();
-              }}
+              onPress={handleStartScan}
             >
               <Text style={styles.buttonText}>Start NFC Scan</Text>
             </TouchableOpacity>

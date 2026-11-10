@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -13,22 +13,10 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../App';
 import { useAuthStore } from '@passgage/sdk-react-native';
 
-import { Camera, CameraPermissionStatus } from 'react-native-vision-camera';
-
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 export default function HomeScreen() {
   const navigation = useNavigation<NavigationProp>();
-  const [permission, setPermission] =
-    useState<CameraPermissionStatus>('not-determined');
-
-  useEffect(() => {
-    (async () => {
-      const status = await Camera.requestCameraPermission();
-      setPermission(status);
-    })();
-  }, []);
-
   const { user, logout } = useAuthStore();
 
   const handleLogout = () => {

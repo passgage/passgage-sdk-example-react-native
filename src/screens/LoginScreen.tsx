@@ -9,14 +9,42 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  TextInput,
 } from 'react-native';
 import { useAuthStore } from '@passgage/sdk-react-native';
 import { authorize } from 'react-native-app-auth';
 
+/**
+ * Two ways to sign in. Use the one your company is set up for:
+ * - Email or phone number + password: useAuthStore().login
+ * - Azure AD: get an id_token (here with react-native-app-auth) and pass it
+ *   to useAuthStore().loginWithAzure, or to the provider as msalToken.
+ *
+ * Either way the session is stored on the device and restored on the next
+ * start, so the user signs in once.
+ */
 const LoginScreen = () => {
-  const { loading, error, loginWithAzure } = useAuthStore();
+  const { loading, error, login, loginWithAzure, clearError } = useAuthStore();
+  const [userLogin, setUserLogin] = useState('');
+  const [password, setPassword] = useState('');
 
-  const handleLogin = async () => {
+  useEffect(() => {
+    // Do not show the error of an earlier attempt
+    clearError();
+  }, [clearError]);
+
+  const handlePasswordLogin = () => {
+    login(
+      { login: userLogin.trim(), password },
+      // On success authStatus becomes true and App.tsx shows the home screen
+      () => setPassword(''),
+      // The message the API sent, for example for a wrong password.
+      // It is also in useAuthStore().error, shown below.
+      message => console.log('Login failed:', message),
+    );
+  };
+
+  const handleAzureLogin = async () => {
     try {
       const result = await authorize({
         additionalParameters: { prompt: 'select_account' },
@@ -33,14 +61,21 @@ const LoginScreen = () => {
         iosPrefersEphemeralSession: true,
       });
       if (result?.idToken) {
-        loginWithAzure({ id_token: result.idToken });
+        loginWithAzure(
+          { id_token: result.idToken },
+          undefined,
+          message => console.log('Azure login failed:', message),
+        );
       } else {
         Alert.alert('Login Failed', 'No ID token received');
       }
-    } catch (error) {
-      console.error('Login failed:', error);
+    } catch (authError) {
+      // The user closed the Microsoft sign-in page, or it failed
+      console.log('Azure sign-in was not completed:', authError);
     }
   };
+
+  const canSubmit = userLogin.trim().length > 0 && password.length > 0;
 
   return (
     <KeyboardAvoidingView
@@ -64,16 +99,59 @@ const LoginScreen = () => {
             </View>
           )}
 
+          <View style={styles.inputContainer}>
+            <Text style={styles.label}>Email or phone number</Text>
+            <TextInput
+              style={styles.input}
+              value={userLogin}
+              onChangeText={setUserLogin}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="email-address"
+              textContentType="username"
+              editable={!loading}
+            />
+          </View>
+          <View style={styles.inputContainer}>
+            <Text style={styles.label}>Password</Text>
+            <TextInput
+              style={styles.input}
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              textContentType="password"
+              editable={!loading}
+              onSubmitEditing={canSubmit ? handlePasswordLogin : undefined}
+            />
+          </View>
+
           <TouchableOpacity
-            style={[styles.button, loading && styles.buttonDisabled]}
-            onPress={handleLogin}
-            disabled={loading}
+            style={[
+              styles.button,
+              (loading || !canSubmit) && styles.buttonDisabled,
+            ]}
+            onPress={handlePasswordLogin}
+            disabled={loading || !canSubmit}
           >
             {loading ? (
               <ActivityIndicator color="#fff" />
             ) : (
               <Text style={styles.buttonText}>Sign In</Text>
             )}
+          </TouchableOpacity>
+
+          <Text style={styles.separator}>or</Text>
+
+          <TouchableOpacity
+            style={[
+              styles.button,
+              styles.azureButton,
+              loading && styles.buttonDisabled,
+            ]}
+            onPress={handleAzureLogin}
+            disabled={loading}
+          >
+            <Text style={styles.buttonText}>Sign in with Microsoft</Text>
           </TouchableOpacity>
         </View>
 
@@ -155,6 +233,14 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: {
     opacity: 0.6,
+  },
+  azureButton: {
+    backgroundColor: '#2F2F2F',
+  },
+  separator: {
+    textAlign: 'center',
+    color: '#999',
+    marginVertical: 12,
   },
   buttonText: {
     color: '#fff',

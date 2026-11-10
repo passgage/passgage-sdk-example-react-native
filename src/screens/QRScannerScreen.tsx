@@ -22,8 +22,12 @@ export default function QRScannerScreen() {
       Alert.alert('Success', message);
     },
     onError: error => {
-      const errorMessage = error.message || 'QR validation failed';
-      setLastScanResult(`Error: ${errorMessage}`);
+      // error.error.code tells the causes apart (see docs/error-handling.md)
+      const errorMessage = error?.message || 'QR validation failed';
+      const code = error?.error?.code;
+      setLastScanResult(
+        `Error: ${errorMessage}${code ? ` (${code})` : ''}`,
+      );
       Alert.alert('Failed', errorMessage);
     },
   });
@@ -36,12 +40,8 @@ export default function QRScannerScreen() {
 
     setLastScanResult(null);
 
-    try {
-      await scan(qrCode.trim());
-    } catch (error: any) {
-      // Error already handled by onError callback
-      console.error('QR scan error:', error);
-    }
+    // Failures arrive in onError: scan does not throw
+    await scan(qrCode.trim());
   };
 
   const handleClear = () => {

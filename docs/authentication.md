@@ -1,630 +1,425 @@
-# Authentication Flow
+# Authentication
 
-This document explains how authentication works in the Passgage SDK, including login, token management, and user session handling.
+The SDK signs a user in to the Passgage API and keeps that session. Everything else (QR, NFC, device lists) uses this session. All sign-in state lives in `useAuthStore`.
 
-## Table of Contents
-
-- [Overview](#overview)
-- [Login Flow](#login-flow)
-- [Token Management](#token-management)
-- [User Session](#user-session)
+- [Sign-in methods](#sign-in-methods)
+- [The auth store](#the-auth-store)
+- [Azure AD](#azure-ad)
+- [Email / phone and password](#email--phone-and-password)
+- [Gating on startup](#gating-on-startup)
+- [When onUnauthorized is called](#when-onunauthorized-is-called)
 - [Logout](#logout)
-- [usePassgageAuth Hook](#usepassgageauth-hook)
-- [Examples](#examples)
+- [A failed login and the existing session](#a-failed-login-and-the-existing-session)
+- [One active session per user](#one-active-session-per-user)
 
-## Overview
+## Sign-in methods
 
-The Passgage SDK uses JWT (JSON Web Token) based authentication with automatic token management. Once a user logs in:
+| Method | How | Session at the next app start |
+|--------|-----|-------------------------------|
+| Azure AD, through the provider | Pass the `id_token` as the `msalToken` prop | The provider signs in again with `msalToken`. The stored session is not restored |
+| Azure AD, yourself | Call `loginWithAzure({id_token}, resolve, reject)` | Restored from the Keychain (no `msalToken` prop) |
+| Email or phone number + password | Call `login({login, password}, resolve, reject)` | Restored from the Keychain, unless `rememberUser: false` |
 
-1. JWT tokens (access + refresh) are securely stored
-2. Tokens are automatically injected into all API requests
-3. Expired tokens are automatically refreshed
-4. User information is cached for offline access
+## The auth store
 
-```
-┌─────────────┐
-│   Login     │
-└──────┬──────┘
-       │
-       ▼
-┌─────────────────────┐
-│  JWT Tokens Stored  │
-│  (Secure Storage)   │
-└──────┬──────────────┘
-       │
-       ▼
-┌─────────────────────┐
-│  User Authenticated │
-│  API Calls Work     │
-└─────────────────────┘
-```
+`useAuthStore` is a zustand hook. Use it in components; outside React, read it with `useAuthStore.getState()`.
 
-## Login Flow
+| State | Type | Description |
+|-------|------|-------------|
+| `user` | `User \| null` | The signed-in user. Can be `null` while `authStatus` is `true` (the user record could not be loaded) |
+| `authStatus` | `boolean` | `true` while a user is signed in |
+| `initialized` | `boolean` | `false` until it is known whether there is a session |
+| `loading` | `boolean` | `true` during a login, a logout, or the restore at startup |
+| `error` | `string \| null` | Message of the last failed login, logout or restore |
 
-### Basic Login
+| Method | Signature |
+|--------|-----------|
+| `login` | `(credentials: LoginCredentials, resolve?: (user?: User) => void, reject?: (error: string) => void) => void` |
+| `loginWithAzure` | `(credentials: AzureLoginCredentials, resolve?: (user?: User) => void, reject?: (error: string) => void) => void` |
+| `logout` | `(resolve?: () => void) => Promise<void>` |
+| `restoreSession` | `() => Promise<'restored' \| 'none' \| 'unavailable'>` |
+| `restoreAuth` | `() => Promise<boolean>` |
+| `refreshToken` | `() => Promise<boolean>` |
+| `clearError` | `() => void` |
 
-```typescript
-import {usePassgageAuth} from '@passgage/sdk-react-native';
+`login` and `loginWithAzure` do not return the result. It arrives in the `resolve` / `reject` callbacks, and in the store (`authStatus`, `user`, `error`). `restoreSession`, `restoreAuth` and `refreshToken` are covered in [Token Management](./token-management.md); the provider calls them for you.
 
-function LoginScreen() {
-  const {login, isLoading, error} = usePassgageAuth();
+### The `User` object
 
-  const handleLogin = async () => {
-    const result = await login({
-      username: 'user@example.com',
-      password: 'password123',
-    });
+| Field | Type |
+|-------|------|
+| `id` | `string` |
+| `email` | `string` |
+| `firstName` | `string` |
+| `lastName` | `string` |
+| `company` | `{id: string; name: string}` |
+| `fullName` | `string` (optional) |
+| `gsm` | `string` (optional), phone number |
+| `avatar` | `string \| null` (optional), URL |
+| `jobTitle` | `string \| null` (optional) |
+| `birthDate` | `string \| null` (optional) |
+| `cardNo` | `string \| null` (optional) |
 
-    if (result.success) {
-      console.log('Logged in:', result.user);
-      // Navigate to home screen
-    }
-  };
+## Azure AD
 
-  return (
-    <Button
-      onPress={handleLogin}
-      disabled={isLoading}
-      title="Login"
-    />
-  );
-}
-```
+The SDK does not talk to Microsoft. Your app gets an Azure AD `id_token` (for example with `react-native-app-auth`) and hands it to the SDK, which exchanges it for a Passgage session.
 
-### Login with Callbacks
+### Option 1: the `msalToken` prop
 
-For better UX, use callbacks to handle success and error cases:
-
-```typescript
-const {login, isLoading} = usePassgageAuth({
-  onLoginSuccess: (user) => {
-    Alert.alert('Welcome', `Hello ${user.fullName}!`);
-    navigation.replace('Home');
-  },
-  onLoginError: (error) => {
-    Alert.alert('Login Failed', error.message);
-  },
-});
-
-const handleLogin = async () => {
-  await login({username, password});
-  // Callbacks will be triggered automatically
-};
+```tsx
+<PassgageAccessProvider
+  baseURL="https://your-api.passgage.com"
+  msalToken={idToken}
+  onUnauthorized={error => {
+    // The Azure login failed: error.message is "Azure login failed: <reason>"
+  }}>
+  <Root />
+</PassgageAccessProvider>
 ```
 
-### Login Parameters
+- The provider reads `msalToken` once, when it mounts, and calls `loginWithAzure` with it. A token passed later is ignored. To sign in with a new token, call `loginWithAzure` yourself (Option 2).
+- The provider sends `device_type` from `Platform.OS` (`'ios'` or `'android'`).
+- With `msalToken` the provider does not restore the stored session. It signs in again on every mount.
+- `rememberUser` has no effect on this path.
+- If the login fails, the provider calls `onUnauthorized` with the message `Azure login failed: <reason>`. `initialized` becomes `true` when the login has finished, so your splash screen ends either way.
 
-```typescript
-interface LoginParams {
-  username: string;   // Email or username
-  password: string;   // User password
-}
+Use this option when your app already has a fresh `id_token` every time it starts.
 
-interface LoginResult {
-  success: boolean;   // Whether login succeeded
-  user?: User;        // User object if successful
-  error?: string;     // Error message if failed
-}
-```
+### Option 2: call `loginWithAzure` yourself
 
-## Token Management
+Leave `msalToken` out. Get the token, then call `loginWithAzure`:
 
-### Automatic Token Injection
-
-After successful login, all API requests automatically include the JWT token:
-
-```typescript
-const {checkInEntry} = usePassgageCheckIn();
-
-// This request automatically includes:
-// Authorization: Bearer <your-jwt-token>
-await checkInEntry({
-  branchId: 'branch-123',
-  userId: user.id,
-});
-```
-
-You never need to manually handle tokens!
-
-### Token Storage
-
-Tokens are stored securely using `react-native-keychain`:
-
-```typescript
-// Stored automatically after login:
-{
-  accessToken: "eyJhbGciOiJIUzI1NiIs...",  // Short-lived (1 hour)
-  refreshToken: "eyJhbGciOiJIUzI1NiIs...", // Long-lived (30 days)
-  expiresAt: 1640000000                    // Timestamp
-}
-```
-
-### Automatic Token Refresh
-
-When an access token expires, the SDK automatically:
-
-1. Detects the 401 Unauthorized response
-2. Uses the refresh token to get a new access token
-3. Retries the original request with the new token
-4. Updates stored tokens
-
-This happens transparently - your code doesn't need to handle it:
-
-```typescript
-// Even if token expires during this request,
-// it will automatically refresh and retry
-const result = await getNearbyBranches();
-```
-
-### Token Refresh Flow
-
-```
-API Request → Token Expired? → Yes → Use Refresh Token
-                  ↓                        ↓
-                  No                  New Access Token
-                  ↓                        ↓
-            Use Access Token    ← ─ ─ ─ ─ ┘
-                  ↓
-            API Response
-```
-
-### Manual Token Access (Advanced)
-
-In rare cases where you need direct token access:
-
-```typescript
-import {getStoredToken} from '@passgage/sdk-react-native';
-
-async function getToken() {
-  const token = await getStoredToken();
-  console.log('Current token:', token?.accessToken);
-}
-```
-
-## User Session
-
-### Accessing User Information
-
-After login, user information is available throughout your app:
-
-```typescript
-const {user, isLoading} = usePassgageAuth();
-
-if (isLoading) {
-  return <LoadingScreen />;
-}
-
-if (!user) {
-  return <LoginScreen />;
-}
-
-return (
-  <View>
-    <Text>Welcome, {user.fullName}!</Text>
-    <Text>Email: {user.email}</Text>
-    <Text>Company: {user.company?.name}</Text>
-    <Text>Role: {user.role}</Text>
-  </View>
+```ts
+loginWithAzure(
+  {id_token: idToken, device_type: Platform.OS === 'ios' ? 'ios' : 'android'},
+  user => console.log('Signed in', user?.fullName),
+  message => console.log('Azure login failed', message),
 );
 ```
 
-### User Object Structure
+| Field of `AzureLoginCredentials` | Type | Required | Notes |
+|----------------------------------|------|----------|-------|
+| `id_token` | `string` | Yes | Azure AD `id_token` |
+| `device_type` | `'android' \| 'ios'` | No | When omitted the SDK sends `'android'`. Pass it explicitly on iOS |
 
-```typescript
-interface User {
-  id: string;
-  email: string;
-  fullName: string;
-  firstName?: string;
-  lastName?: string;
-  gsm?: string;          // Phone number
-  jobTitle?: string;
-  role?: string;
-  company?: {
-    id: string;
-    name: string;
-    logo?: string;
-  };
-  profilePicture?: string;
-  isActive: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-```
+The session is stored in the Keychain. Because there is no `msalToken`, the provider restores it at the next start, and the user does not have to go through Azure again. Show your Azure login screen only when there is no session (`initialized && !authStatus`).
 
-### Checking Authentication Status
+#### Where the error message comes from
 
-```typescript
-const {user, isAuthenticated} = usePassgageAuth();
+The `reject` callback and `error` get a string:
 
-// Method 1: Check user object
-if (user) {
-  console.log('User is authenticated');
-}
+1. The `message` the API sent, when it sent one (a refused Azure token is answered with HTTP 401 and a message).
+2. Otherwise the error text of the HTTP client (for example a timeout or a network error).
+3. Otherwise `An error occurred during Azure login`, or `Azure login failed` when the API answered without tokens.
 
-// Method 2: Use isAuthenticated helper
-if (isAuthenticated) {
-  console.log('User is authenticated');
-}
-```
+A 401 on the Azure login never triggers a token refresh.
 
-### Persistent Sessions
+#### Login screen with `react-native-app-auth`
 
-User sessions persist across app restarts:
-
-```typescript
-// On app launch
-function App() {
-  const {user, isLoading} = usePassgageAuth();
-
-  if (isLoading) {
-    // Checking if user was previously logged in
-    return <SplashScreen />;
-  }
-
-  return (
-    <NavigationContainer>
-      {user ? <AuthenticatedApp /> : <LoginScreen />}
-    </NavigationContainer>
-  );
-}
-```
-
-## Logout
-
-### Basic Logout
-
-```typescript
-const {logout} = usePassgageAuth();
-
-const handleLogout = async () => {
-  await logout();
-  // User is now logged out
-  // Tokens are cleared
-  // Navigation to login screen happens automatically
-};
-```
-
-### Logout with Confirmation
-
-```typescript
-const {logout} = usePassgageAuth();
-
-const handleLogout = () => {
-  Alert.alert(
-    'Logout',
-    'Are you sure you want to logout?',
-    [
-      {text: 'Cancel', style: 'cancel'},
-      {
-        text: 'Logout',
-        style: 'destructive',
-        onPress: async () => {
-          await logout();
-          navigation.replace('Login');
-        },
-      },
-    ]
-  );
-};
-```
-
-### What Happens on Logout?
-
-1. JWT tokens are removed from secure storage
-2. User object is cleared from memory
-3. API client authorization header is removed
-4. Cached user data is cleared
-5. App navigates to login screen (if configured)
-
-## usePassgageAuth Hook
-
-### Complete API Reference
-
-```typescript
-interface UsePassgageAuthOptions {
-  onLoginSuccess?: (user: User) => void;
-  onLoginError?: (error: Error) => void;
-  onLogout?: () => void;
-}
-
-interface UsePassgageAuthReturn {
-  // User state
-  user: User | null;
-  isAuthenticated: boolean;
-  isLoading: boolean;
-  error: Error | null;
-
-  // Actions
-  login: (params: LoginParams) => Promise<LoginResult>;
-  logout: () => Promise<void>;
-  refreshUser: () => Promise<void>;
-}
-```
-
-### Hook Usage Examples
-
-#### Example 1: Simple Login/Logout
-
-```typescript
-function AuthButton() {
-  const {user, login, logout, isLoading} = usePassgageAuth();
-
-  if (user) {
-    return (
-      <Button
-        title="Logout"
-        onPress={logout}
-        disabled={isLoading}
-      />
-    );
-  }
-
-  return (
-    <Button
-      title="Login"
-      onPress={() => login({username: '...', password: '...'})}
-      disabled={isLoading}
-    />
-  );
-}
-```
-
-#### Example 2: Protected Component
-
-```typescript
-function ProtectedScreen() {
-  const {user, isLoading} = usePassgageAuth();
-
-  if (isLoading) {
-    return <ActivityIndicator />;
-  }
-
-  if (!user) {
-    return (
-      <View>
-        <Text>Please login to access this feature</Text>
-        <Button title="Login" onPress={() => navigation.navigate('Login')} />
-      </View>
-    );
-  }
-
-  return <SecureContent user={user} />;
-}
-```
-
-#### Example 3: User Profile Display
-
-```typescript
-function ProfileScreen() {
-  const {user, logout, refreshUser, isLoading} = usePassgageAuth();
-
-  return (
-    <ScrollView>
-      <Image source={{uri: user?.profilePicture}} />
-      <Text style={styles.name}>{user?.fullName}</Text>
-      <Text style={styles.email}>{user?.email}</Text>
-
-      {user?.company && (
-        <View style={styles.company}>
-          <Text>{user.company.name}</Text>
-        </View>
-      )}
-
-      <Button
-        title="Refresh Profile"
-        onPress={refreshUser}
-        disabled={isLoading}
-      />
-
-      <Button
-        title="Logout"
-        onPress={logout}
-      />
-    </ScrollView>
-  );
-}
-```
-
-#### Example 4: Conditional Features Based on User Role
-
-```typescript
-function HomeScreen() {
-  const {user} = usePassgageAuth();
-
-  return (
-    <View>
-      <Button title="QR Scanner" onPress={...} />
-      <Button title="Check In" onPress={...} />
-
-      {user?.role === 'admin' && (
-        <Button title="Admin Panel" onPress={...} />
-      )}
-
-      {user?.company?.features?.includes('remote_work') && (
-        <Button title="Remote Work" onPress={...} />
-      )}
-    </View>
-  );
-}
-```
-
-## Examples
-
-### Complete Login Screen Example
-
-```typescript
-import React, {useState} from 'react';
+```tsx
+import React from 'react';
 import {
-  View,
-  TextInput,
-  TouchableOpacity,
-  Text,
   ActivityIndicator,
   Alert,
-  StyleSheet,
-  KeyboardAvoidingView,
   Platform,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import {usePassgageAuth} from '@passgage/sdk-react-native';
+import {authorize} from 'react-native-app-auth';
+import {useAuthStore} from '@passgage/sdk-react-native';
 
-export default function LoginScreen({navigation}) {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
+const TENANT_ID = '<your-tenant-id>';
 
-  const {login, isLoading} = usePassgageAuth({
-    onLoginSuccess: (user) => {
-      Alert.alert('Success', `Welcome back, ${user.fullName}!`);
-      navigation.replace('Home');
-    },
-    onLoginError: (error) => {
-      Alert.alert('Login Failed', error.message);
-    },
-  });
+const azureConfig = {
+  clientId: '<your-client-id>',
+  redirectUrl:
+    Platform.OS === 'android'
+      ? 'msauth://<your.package>/<signature-hash>'
+      : 'msauth.<your.bundle.id>://auth/',
+  scopes: ['openid', 'profile', 'offline_access'],
+  serviceConfiguration: {
+    authorizationEndpoint: `https://login.microsoftonline.com/${TENANT_ID}/oauth2/v2.0/authorize`,
+    tokenEndpoint: `https://login.microsoftonline.com/${TENANT_ID}/oauth2/v2.0/token`,
+  },
+  additionalParameters: {prompt: 'select_account' as const},
+};
+
+export default function AzureLoginScreen() {
+  const {loading, error, loginWithAzure, clearError} = useAuthStore();
 
   const handleLogin = async () => {
-    if (!username.trim()) {
-      Alert.alert('Error', 'Please enter your username or email');
+    clearError();
+
+    let idToken: string | undefined;
+    try {
+      const result = await authorize(azureConfig);
+      idToken = result.idToken;
+    } catch (e) {
+      // The user cancelled, or Azure refused: the SDK was not involved
       return;
     }
 
-    if (!password.trim()) {
-      Alert.alert('Error', 'Please enter your password');
+    if (!idToken) {
+      Alert.alert('Login failed', 'No ID token received');
       return;
     }
 
-    await login({
-      username: username.trim(),
-      password: password.trim(),
-    });
+    loginWithAzure(
+      {id_token: idToken, device_type: Platform.OS === 'ios' ? 'ios' : 'android'},
+      () => {
+        // authStatus is now true: your navigator switches to the app
+      },
+      message => Alert.alert('Login failed', message),
+    );
   };
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
-    >
-      <View style={styles.content}>
-        <Text style={styles.title}>Passgage</Text>
-        <Text style={styles.subtitle}>Access Control System</Text>
-
-        <TextInput
-          style={styles.input}
-          placeholder="Username or Email"
-          value={username}
-          onChangeText={setUsername}
-          autoCapitalize="none"
-          autoCorrect={false}
-          editable={!isLoading}
-          returnKeyType="next"
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Password"
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-          editable={!isLoading}
-          returnKeyType="done"
-          onSubmitEditing={handleLogin}
-        />
-
-        <TouchableOpacity
-          style={[styles.button, isLoading && styles.buttonDisabled]}
-          onPress={handleLogin}
-          disabled={isLoading}
-        >
-          {isLoading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.buttonText}>Login</Text>
-          )}
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.forgotPassword}
-          onPress={() => Alert.alert('Info', 'Contact your admin')}
-        >
-          <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
-        </TouchableOpacity>
-      </View>
-    </KeyboardAvoidingView>
+    <View style={styles.container}>
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+      <TouchableOpacity
+        style={[styles.button, loading && styles.disabled]}
+        onPress={handleLogin}
+        disabled={loading}>
+        {loading ? (
+          <ActivityIndicator color="#fff" />
+        ) : (
+          <Text style={styles.buttonText}>Sign in with Microsoft</Text>
+        )}
+      </TouchableOpacity>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
-  content: {
-    flex: 1,
-    padding: 20,
-    justifyContent: 'center',
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#007AFF',
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-    color: '#666',
-    textAlign: 'center',
-    marginBottom: 40,
-  },
-  input: {
-    height: 50,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    paddingHorizontal: 15,
-    fontSize: 16,
-    backgroundColor: '#fff',
-    marginBottom: 15,
-  },
+  container: {flex: 1, justifyContent: 'center', padding: 24},
+  error: {color: '#c00', marginBottom: 12},
   button: {
     height: 50,
-    backgroundColor: '#007AFF',
     borderRadius: 8,
+    backgroundColor: '#007AFF',
+    alignItems: 'center',
     justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 10,
   },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  buttonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  forgotPassword: {
-    marginTop: 20,
-    alignItems: 'center',
-  },
-  forgotPasswordText: {
-    color: '#007AFF',
-    fontSize: 14,
-  },
+  disabled: {opacity: 0.6},
+  buttonText: {color: '#fff', fontSize: 16, fontWeight: '600'},
 });
 ```
 
-## Security Best Practices
+## Email / phone and password
 
-1. **Never Store Passwords**: Only send passwords during login, never store them
-2. **Use HTTPS**: Always use HTTPS API endpoints
-3. **Validate Input**: Validate username/password before sending to API
-4. **Handle Errors**: Display user-friendly error messages
-5. **Secure Storage**: SDK uses react-native-keychain for secure token storage
-6. **Auto-Logout**: Consider implementing auto-logout on extended inactivity
+Leave `msalToken` out of the provider and call `login`:
 
-## Next Steps
+```ts
+login(
+  {login: 'user@example.com', password: 'secret'}, // email or phone number
+  user => console.log('Signed in', user?.fullName),
+  message => console.log('Login failed', message),
+);
+```
 
-- [Token Management](./token-management.md) - Deep dive into token handling
-- [Error Handling](./error-handling.md) - Handle authentication errors
-- [Security Guidelines](./security.md) - Security best practices
-- [FAQ](./faq.md) - Common authentication questions
+| Field of `LoginCredentials` | Type | Required | Notes |
+|-----------------------------|------|----------|-------|
+| `login` | `string` | Yes | Email address or phone number |
+| `password` | `string` | Yes | |
+| `rememberUser` | `boolean` | No | Default `true`. `false` keeps the session in memory only |
+
+With `rememberUser: false`:
+
+- The session is not written to the Keychain, and a session stored by an earlier login is removed.
+- Refreshed tokens are not written either.
+- After an app restart there is no session, and the user signs in again.
+
+The `reject` message is the `message` the API sent (a wrong password is answered with HTTP 422 and a message), otherwise the error text of the HTTP client, otherwise `An error occurred during login` (or `Login failed` when the API answered without tokens).
+
+### Login screen
+
+```tsx
+import React, {useState} from 'react';
+import {
+  ActivityIndicator,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import {useAuthStore} from '@passgage/sdk-react-native';
+
+export default function PasswordLoginScreen() {
+  const {login, loading, error, clearError} = useAuthStore();
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [rememberUser, setRememberUser] = useState(true);
+
+  const onChange = (setter: (value: string) => void) => (value: string) => {
+    if (error) {
+      clearError();
+    }
+    setter(value);
+  };
+
+  const handleLogin = () => {
+    if (!username.trim() || !password) {
+      return;
+    }
+    login({login: username.trim(), password, rememberUser});
+    // Success sets authStatus to true; a failure sets error
+  };
+
+  return (
+    <View style={styles.container}>
+      <TextInput
+        style={styles.input}
+        placeholder="Email or phone number"
+        autoCapitalize="none"
+        keyboardType="email-address"
+        value={username}
+        onChangeText={onChange(setUsername)}
+        editable={!loading}
+      />
+      <TextInput
+        style={styles.input}
+        placeholder="Password"
+        secureTextEntry
+        value={password}
+        onChangeText={onChange(setPassword)}
+        editable={!loading}
+        onSubmitEditing={handleLogin}
+      />
+      <View style={styles.row}>
+        <Text>Keep me signed in</Text>
+        <Switch value={rememberUser} onValueChange={setRememberUser} />
+      </View>
+
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+
+      <TouchableOpacity
+        style={[styles.button, loading && styles.disabled]}
+        onPress={handleLogin}
+        disabled={loading}>
+        {loading ? (
+          <ActivityIndicator color="#fff" />
+        ) : (
+          <Text style={styles.buttonText}>Sign in</Text>
+        )}
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {flex: 1, justifyContent: 'center', padding: 24},
+  input: {
+    height: 48,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    marginBottom: 12,
+  },
+  row: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  error: {color: '#c00', marginBottom: 12},
+  button: {
+    height: 50,
+    borderRadius: 8,
+    backgroundColor: '#007AFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  disabled: {opacity: 0.6},
+  buttonText: {color: '#fff', fontSize: 16, fontWeight: '600'},
+});
+```
+
+## Gating on startup
+
+Show a splash screen until `initialized` is `true`, then choose on `authStatus`:
+
+```tsx
+function Root() {
+  const {initialized, authStatus} = useAuthStore();
+
+  if (!initialized) {
+    return <Splash />;
+  }
+  return authStatus ? <AppStack /> : <LoginScreen />;
+}
+```
+
+`initialized` becomes `true` once the stored session has been looked up, a login attempt has finished, or the user has logged out. It stays `true` after that. Do not gate on `loading`: it is also `true` during each login and logout. See [Getting Started](./getting-started.md#a-minimal-app).
+
+## When onUnauthorized is called
+
+The provider calls `onUnauthorized(error)` in these cases only:
+
+| Case | `error.message` |
+|------|-----------------|
+| `msalToken` is set and the provider's Azure login failed | `Azure login failed: <reason>` |
+| No `msalToken`, and no session could be restored at startup (none stored, or the stored one could no longer be renewed) | `No active session. Login is required` |
+| No `msalToken` and `rememberUser={false}` (every startup) | `No active session. Login is required` |
+| A request got 401, the refresh was refused, and that ended the session | `Session expired. Login is required` |
+
+It is not called:
+
+- when your own call to `login` or `loginWithAzure` fails (use `reject` or `error`),
+- when you call `logout()`,
+- when you call `refreshToken()` yourself and it ends the session (watch `authStatus`),
+- while the Keychain cannot be read on a locked iOS device (the provider waits for the foreground and tries again),
+- when a refresh fails on the network: the session is kept.
+
+When a session ends it is called once. The provider always calls the latest `onUnauthorized` you passed.
+
+If your navigator already switches on `authStatus`, `onUnauthorized` is optional. Use it for side effects such as telling the user that the session has expired, or resetting your own navigation state.
+
+## Logout
+
+```ts
+const {logout} = useAuthStore();
+
+await logout();
+// or
+logout(() => navigation.reset({index: 0, routes: [{name: 'Login'}]}));
+```
+
+`logout(resolve?)` returns a `Promise<void>`. It:
+
+- drops the session held in memory,
+- removes the `Authorization` header from the HTTP client,
+- empties the device lists (`qrScannerStore.reset()`),
+- forgets the recent reads used by the 30-second repeated-read check,
+- removes the tokens and the user record from the Keychain,
+- sets `authStatus` to `false`, `user` to `null` and `initialized` to `true`.
+
+It does not call the API, and it does not call `onUnauthorized`.
+
+Call `logout()` when your own user signs out of your app. The stored session belongs to whoever signed in last on the device, so a shared device keeps the previous user's session until you log out.
+
+## A failed login and the existing session
+
+A failed `login` or `loginWithAzure` can end a session that was active before it, depending on why it failed:
+
+| Why it failed | Existing session |
+|---------------|------------------|
+| The API refused it: an HTTP 4xx answer other than 429 (wrong password, refused Azure token), or an answer without tokens | Ended. The SDK calls `logout()`: the Keychain is cleared and `authStatus` becomes `false` |
+| No answer (offline, timeout), HTTP 429, or HTTP 5xx | Kept. `authStatus` and the stored session do not change |
+
+In both cases `reject` is called with the message, `error` is set, and `loading` returns to `false`.
+
+## One active session per user
+
+The Passgage API keeps one active session per user. A login (or a token refresh) anywhere else invalidates the token the SDK holds, and the other way round. This applies across apps: if the same user also uses the Passgage app, signing in through the SDK ends that user's session in the Passgage app, and signing in to the Passgage app ends the SDK's session.
+
+What this means for the SDK:
+
+- After the other app has signed in, the SDK's next request gets HTTP 401. The SDK refreshes its token once and repeats the request. The user does not see this. See [Token Management](./token-management.md#401-refresh-replay).
+- The refresh in turn invalidates the other app's token. How that app recovers is up to that app.
+- With the `msalToken` prop, the provider creates a new session on every mount, which invalidates the other app's session at every start of your app.
+- If the refresh is refused (for example, the SDK's access token has passed its 60 days), the session ends and `onUnauthorized` is called.
